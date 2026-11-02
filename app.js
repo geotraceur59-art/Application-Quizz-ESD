@@ -80,6 +80,7 @@ const ICONS = {
      - mauvaise réponse
      - mauvaise réponse
      - mauvaise réponse
+     > explication facultative
    (ligne vide entre deux questions, # = commentaire)
    ========================================================= */
 function parseQuizText(text) {
@@ -107,7 +108,9 @@ function parseQuizText(text) {
         errors.push(`${label} : question en double, ignorée.`);
       } else {
         seen.add(id);
-        questions.push({ id, q, choices: cur.choices.map(c => c.text), answer });
+        const item = { id, q, choices: cur.choices.map(c => c.text), answer };
+        if (cur.explain) item.explain = cur.explain;
+        questions.push(item);
       }
     }
     cur = null;
@@ -115,13 +118,18 @@ function parseQuizText(text) {
 
   // Format « tout sur une ligne » (texte copié depuis Anki, un PDF, une page web…) :
   //   Question ? * bonne - mauvaise - mauvaise - mauvaise
+  //   Question ? * bonne - mauvaise - mauvaise - mauvaise > explication
   // Si la ligne contient une étoile suivie d'un espace, on la découpe
   // devant chaque « * » ou « - » précédé et suivi d'un espace.
+  // Tout ce qui suit le premier « > » est l'explication (pas découpée).
   const expanded = [];
   lines.forEach((raw, i) => {
     const line = raw.trim();
     if (line && !line.startsWith('#') && /(^|\s)\*\s/.test(line) && /\s[-–—•*]\s/.test(line)) {
-      line.split(/\s+(?=[*\-–—•]\s)/).forEach(part => expanded.push({ line: part.trim(), n: i + 1 }));
+      const cut = line.search(/\s>\s/);
+      const head = cut === -1 ? line : line.slice(0, cut);
+      head.split(/\s+(?=[*\-–—•]\s)/).forEach(part => expanded.push({ line: part.trim(), n: i + 1 }));
+      if (cut !== -1) expanded.push({ line: line.slice(cut).trim(), n: i + 1 });
     } else {
       expanded.push({ line, n: i + 1 });
     }
@@ -130,6 +138,13 @@ function parseQuizText(text) {
   expanded.forEach(({ line, n }) => {
     if (!line) { finish(); return; }
     if (line.startsWith('#')) return;
+
+    const info = line.match(/^>\s*(.+)$/);
+    if (info) {
+      if (!cur) { errors.push(`Ligne ${n} : explication (>) sans question au-dessus.`); return; }
+      cur.explain = (cur.explain ? cur.explain + '\n' : '') + info[1].trim();
+      return;
+    }
 
     const good = line.match(/^\*\s*(.+)$/);
     const bad = line.match(/^[-–—•]\s+(.+)$/);
@@ -299,6 +314,7 @@ const VIEWS = {
             <span class="count">Ratée ${quiz.stats[q.id].wrong} fois</span>
             <p class="q">${esc(q.q)}</p>
             <p class="a right"><span class="dot"></span><span>${esc(q.choices[q.answer])}</span></p>
+            ${q.explain ? `<p class="explain small">${esc(q.explain)}</p>` : ''}
           </div>`).join('')}
       </div>` : ''}
 
@@ -353,6 +369,7 @@ const VIEWS = {
       <p class="question">${esc(q.q)}</p>
       <div class="choices ${done ? 'answered' : ''}">${choices}</div>
       ${done ? `<p class="verdict ${item.ok ? 'good' : 'bad'}">${item.ok ? 'Bonne réponse' : 'Raté, la bonne réponse est en vert'}</p>` : ''}
+      ${done && q.explain ? `<p class="explain">${esc(q.explain)}</p>` : ''}
       ${done ? dock(`<button class="btn btn-primary" data-action="next">${last ? 'Voir mon score' : 'Question suivante'}</button>`) : ''}`;
   },
 
@@ -382,6 +399,7 @@ const VIEWS = {
             <p class="q">${esc(q.q)}</p>
             <p class="a yours"><span class="dot"></span><span>${esc(q.choices[i.picked])}</span></p>
             <p class="a right"><span class="dot"></span><span>${esc(q.choices[q.answer])}</span></p>
+            ${q.explain ? `<p class="explain small">${esc(q.explain)}</p>` : ''}
           </div>`;
         }).join('')}
       </div>` : ''}

@@ -180,6 +180,14 @@ p { margin: 0; }
 .verdict.good { color: var(--good); }
 .verdict.bad { color: var(--bad); }
 
+.explain {
+  margin-top: 12px; padding: 14px 16px;
+  background: var(--ink-soft); color: var(--text);
+  border-left: 4px solid var(--ink); border-radius: 6px var(--radius) var(--radius) 6px;
+  white-space: pre-line; overflow-wrap: anywhere;
+}
+.mistake .explain { margin-top: 4px; padding: 10px 12px; }
+
 /* ---------- Résultats ---------- */
 .result-hero { text-align: center; margin: 18px 0 26px; }
 .result-hero .big {
