@@ -242,6 +242,7 @@ const ICONS = {
   close: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>',
   shuffle: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h5v5M4 20 21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>',
   list: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="5" cy="6" r="1.6"/><circle cx="5" cy="12" r="1.6"/><circle cx="5" cy="18" r="1.6"/><path d="M10 6h10M10 12h10M10 18h10"/></svg>',
+  dash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 12h12"/></svg>',
   check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
   gear: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>',
 };
@@ -457,6 +458,7 @@ const VIEWS = {
     const sel = state.sel;
     const total = list.filter(q => sel.has(q.id)).reduce((n, q) => n + q.questions.length, 0);
     const allOn = list.every(q => sel.has(q.id));
+    const someOn = !allOn && list.some(q => sel.has(q.id));
     return `
       <div class="topbar">
         <button class="icon-btn" data-action="home" aria-label="Retour à l'accueil">${ICONS.back}</button>
@@ -467,11 +469,13 @@ const VIEWS = {
       ${total ? countPicker(total) : ''}
 
       <div class="section">
-        <div class="section-head">
-          <h2>Thèmes inclus</h2>
-          <button class="link-btn" data-action="toggle-all">${allOn ? 'Tout décocher' : 'Tout cocher'}</button>
-        </div>
+        <h2>Thèmes inclus</h2>
         <div class="check-list">
+          <button class="check-row all ${allOn ? 'on' : someOn ? 'some' : ''}" data-action="toggle-all" role="checkbox" aria-checked="${allOn ? 'true' : someOn ? 'mixed' : 'false'}">
+            <span class="box" aria-hidden="true">${allOn ? ICONS.check : someOn ? ICONS.dash : ICONS.check}</span>
+            <span class="check-title">Tous les thèmes</span>
+            <span class="muted small">${list.reduce((n, q) => n + q.questions.length, 0)}</span>
+          </button>
           ${list.map(q => `
             <button class="check-row ${sel.has(q.id) ? 'on' : ''}" data-action="toggle-theme" data-id="${q.id}" role="checkbox" aria-checked="${sel.has(q.id)}">
               <span class="box" aria-hidden="true">${ICONS.check}</span>
@@ -731,21 +735,23 @@ function countPicker(total) {
   state.total = total;
   state.count = clampCount(state.want || preferredCount(), total); // « want » = le choix de l'utilisateur, gardé même si on décoche un thème
   const n = state.count;
-  const presets = [10, 20, 50].filter(x => x < total);
   return `
     <div class="section">
       <h2>Nombre de questions</h2>
-      <div class="counter">
-        <button class="step" data-action="count-step" data-d="-1" aria-label="Une question de moins">−</button>
-        <input id="count-input" type="number" inputmode="numeric" pattern="[0-9]*" min="1" max="${total}" value="${n}" aria-label="Nombre de questions">
-        <button class="step" data-action="count-step" data-d="1" aria-label="Une question de plus">+</button>
-      </div>
-      <p class="muted small counter-note">sur ${plural(total, 'question disponible', 'questions disponibles')}</p>
-      <div class="chips">
-        ${presets.map(x => `<button class="chip ${n === x ? 'on' : ''}" data-action="count-set" data-n="${x}">${x}</button>`).join('')}
-        <button class="chip ${n === total ? 'on' : ''}" data-action="count-set" data-n="${total}">Toutes</button>
+      <div class="gauge">
+        <p class="gauge-value"><b id="count-value">${n}</b><span>/ ${total}</span></p>
+        <div class="gauge-row">
+          <button class="step" data-action="count-step" data-d="-1" aria-label="Une question de moins">−</button>
+          <input id="count-range" class="range" type="range" min="1" max="${total}" step="1" value="${n}"
+                 style="--p:${gaugePct(n, total)}%" aria-label="Nombre de questions" aria-valuetext="${plural(n, 'question', 'questions')}">
+          <button class="step" data-action="count-step" data-d="1" aria-label="Une question de plus">+</button>
+        </div>
+        <div class="gauge-ends"><span>1</span><span>${total}</span></div>
       </div>
     </div>`;
+}
+function gaugePct(n, total) {
+  return total > 1 ? ((n - 1) / (total - 1)) * 100 : 100;
 }
 function startLabel() {
   return 'Lancer ' + plural(state.count || 1, 'question', 'questions');
@@ -758,11 +764,19 @@ function setCount(n, rerender) {
     const y = window.scrollY;
     render();
     window.scrollTo(0, y);
-  } else {
-    const btn = document.getElementById('start-btn');
-    if (btn) btn.textContent = startLabel();
-    document.querySelectorAll('.chip').forEach(c => c.classList.toggle('on', Number(c.dataset.n) === state.count));
+    return;
   }
+  // Mise à jour légère pendant que le doigt glisse sur la jauge
+  const range = document.getElementById('count-range');
+  if (range) {
+    range.value = state.count;
+    range.style.setProperty('--p', gaugePct(state.count, state.total) + '%');
+    range.setAttribute('aria-valuetext', plural(state.count, 'question', 'questions'));
+  }
+  const val = document.getElementById('count-value');
+  if (val) val.textContent = state.count;
+  const btn = document.getElementById('start-btn');
+  if (btn) btn.textContent = startLabel();
 }
 
 /* ---------- Import : rapport en direct ---------- */
@@ -857,8 +871,7 @@ const ACTIONS = {
     state.sel = new Set(allOn ? [] : db.quizzes.map(q => q.id));
     const y = window.scrollY; render(); window.scrollTo(0, y);
   },
-  'count-step': el => setCount((state.count || 1) + Number(el.dataset.d), true),
-  'count-set': el => setCount(el.dataset.n, true),
+  'count-step': el => setCount((state.count || 1) + Number(el.dataset.d), false),
 
   start: el => {
     const quiz = getQuiz(state.id);
@@ -1031,12 +1044,9 @@ async function connect(cfg) {
   else toast(syncState.msg || 'Connecté, mais la synchro a échoué.');
 }
 
-// Saisie directe du nombre de questions
+// Jauge du nombre de questions
 $app.addEventListener('input', e => {
-  if (e.target.id === 'count-input' && e.target.value !== '') setCount(e.target.value, false);
-});
-$app.addEventListener('change', e => {
-  if (e.target.id === 'count-input') setCount(e.target.value || 1, true);
+  if (e.target.id === 'count-range') setCount(e.target.value, false);
 });
 
 $app.addEventListener('click', e => {

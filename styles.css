@@ -274,30 +274,44 @@ p { margin: 0; }
 .menu-title { font-family: var(--display); font-size: 21px; font-weight: 800; line-height: 1.2; }
 .menu-sub { font-size: 15px; color: var(--muted); }
 
-/* ---------- Nombre de questions ---------- */
-.counter {
-  display: grid; grid-template-columns: 64px 1fr 64px; gap: 10px; align-items: stretch;
+/* ---------- Nombre de questions (jauge) ---------- */
+.gauge { background: var(--sheet); border-radius: var(--radius-big); padding: 16px 14px 12px; }
+.gauge-value { text-align: center; margin-bottom: 6px; }
+.gauge-value b {
+  font-family: var(--display); font-size: 48px; font-weight: 800; line-height: 1;
+  color: var(--ink); font-variant-numeric: tabular-nums;
 }
-.counter .step {
-  border: 0; border-radius: 18px; background: var(--sheet); color: var(--ink);
-  font-family: var(--display); font-size: 30px; font-weight: 700; min-height: 64px;
+.gauge-value span { font-family: var(--display); font-size: 20px; font-weight: 700; color: var(--muted); margin-left: 6px; }
+.gauge-row { display: grid; grid-template-columns: 44px 1fr 44px; align-items: center; gap: 10px; }
+.gauge .step {
+  width: 44px; height: 44px; border: 0; border-radius: 50%;
+  background: var(--ink-soft); color: var(--ink);
+  font-family: var(--display); font-size: 26px; font-weight: 700; line-height: 1;
 }
-.counter input {
-  width: 100%; min-width: 0; text-align: center;
-  border: 2px solid var(--line); border-radius: 18px; background: var(--sheet);
-  font-family: var(--display); font-size: 34px; font-weight: 800; color: var(--ink);
-  font-variant-numeric: tabular-nums; -moz-appearance: textfield;
+.gauge-ends { display: flex; justify-content: space-between; padding: 2px 54px 0; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+.range {
+  -webkit-appearance: none; appearance: none; width: 100%; height: 44px; margin: 0;
+  background: transparent; cursor: pointer; touch-action: pan-y;
 }
-.counter input:focus { outline: none; border-color: var(--ink); }
-.counter input::-webkit-outer-spin-button,
-.counter input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
-.counter-note { text-align: center; margin-top: 8px; }
-.chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; justify-content: center; }
-.chip {
-  border: 2px solid var(--line); background: transparent; color: var(--text);
-  border-radius: 999px; padding: 0 18px; min-height: 40px; font-weight: 600; font-size: 15px;
+.range:focus { outline: none; }
+.range::-webkit-slider-runnable-track {
+  height: 12px; border-radius: 6px;
+  background: linear-gradient(to right, var(--ink) 0 var(--p), var(--line) var(--p) 100%);
 }
-.chip.on { border-color: var(--ink); background: var(--ink-soft); color: var(--ink); }
+.range::-moz-range-track { height: 12px; border-radius: 6px; background: var(--line); }
+.range::-moz-range-progress { height: 12px; border-radius: 6px; background: var(--ink); }
+.range::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 32px; height: 32px; margin-top: -10px; border-radius: 50%;
+  background: var(--sheet); border: 4px solid var(--ink);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, .25);
+}
+.range::-moz-range-thumb {
+  width: 24px; height: 24px; border-radius: 50%;
+  background: var(--sheet); border: 4px solid var(--ink);
+}
+.range:focus-visible::-webkit-slider-thumb { outline: 3px solid var(--ink); outline-offset: 3px; }
 
 /* ---------- Thèmes cochés ---------- */
 .section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
@@ -315,7 +329,9 @@ p { margin: 0; }
   display: grid; place-items: center; color: transparent;
 }
 .check-row .box svg { width: 18px; height: 18px; }
-.check-row.on .box { background: var(--ink); border-color: var(--ink); color: var(--sheet); }
+.check-row.on .box, .check-row.some .box { background: var(--ink); border-color: var(--ink); color: var(--sheet); }
+.check-row.all { border-bottom: 2px solid var(--line); }
+.check-row.all .check-title { font-weight: 700; }
 
 .q-theme { color: var(--ink); font-weight: 600; font-size: 14px; margin: 6px 2px -4px; }
 .mistake .q-theme { margin: 0; }
