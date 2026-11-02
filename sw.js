@@ -1,16 +1,16 @@
 /* Service worker : permet à l'app de fonctionner sans connexion.
    Après chaque modification des fichiers, augmente le numéro de VERSION
    pour que l'iPhone télécharge la nouvelle version. */
-const VERSION = 'revisions-v1';
+const VERSION = 'revisions-v2';
 const FILES = [
   './',
   './index.html',
   './styles.css',
   './app.js',
   './manifest.json',
-  './icons/apple-touch-icon.png',
-  './icons/icon-192.png',
-  './icons/icon-512.png',
+  './apple-touch-icon.png',
+  './icon-192.png',
+  './icon-512.png',
 ];
 
 self.addEventListener('install', event => {
