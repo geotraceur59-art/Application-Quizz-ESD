@@ -20,9 +20,9 @@ let state = { screen: 'home' };
 function loadDb() {
   try {
     const d = JSON.parse(localStorage.getItem(STORE_KEY));
-    if (d && Array.isArray(d.quizzes)) { d.deleted = d.deleted || {}; return d; }
+    if (d && Array.isArray(d.quizzes)) { d.deleted = d.deleted || {}; d.diagrams = d.diagrams || []; return d; }
   } catch (e) { /* données illisibles : on repart de zéro */ }
-  return { quizzes: [], deleted: {} };
+  return { quizzes: [], deleted: {}, diagrams: [] };
 }
 function writeLocal() {
   try {
@@ -36,6 +36,7 @@ function saveDb() {
   scheduleSync();
 }
 function getQuiz(id) { return db.quizzes.find(q => q.id === id); }
+function getDiagram(id) { return db.diagrams.find(d => d.id === id); }
 
 /* =========================================================
    Synchronisation avec un dépôt GitHub privé
@@ -94,17 +95,24 @@ function mergeDb(a, b) {
   [a.deleted || {}, b.deleted || {}].forEach(d => Object.entries(d).forEach(([id, t]) => {
     if (t > limit) deleted[id] = Math.max(deleted[id] || 0, t);
   }));
-  const map = new Map();
-  [...(a.quizzes || []), ...(b.quizzes || [])].forEach(q => {
-    const cur = map.get(q.id);
-    if (!cur || (q.updatedAt || 0) > (cur.updatedAt || 0)) map.set(q.id, q);
-  });
-  const quizzes = [...map.values()]
-    .filter(q => !(deleted[q.id] && deleted[q.id] >= (q.updatedAt || 0)))
-    .sort((x, y) => (x.id < y.id ? -1 : 1));
+  // Pour chaque élément (thème ou schéma), on garde la version la plus récente
+  const mergeList = (x = [], y = []) => {
+    const map = new Map();
+    [...x, ...y].forEach(item => {
+      const cur = map.get(item.id);
+      if (!cur || (item.updatedAt || 0) > (cur.updatedAt || 0)) map.set(item.id, item);
+    });
+    return [...map.values()]
+      .filter(item => !(deleted[item.id] && deleted[item.id] >= (item.updatedAt || 0)))
+      .sort((p, q) => (p.id < q.id ? -1 : 1));
+  };
   const sortedDeleted = {};
   Object.keys(deleted).sort().forEach(k => { sortedDeleted[k] = deleted[k]; });
-  return { quizzes, deleted: sortedDeleted };
+  return {
+    quizzes: mergeList(a.quizzes, b.quizzes),
+    deleted: sortedDeleted,
+    diagrams: mergeList(a.diagrams, b.diagrams),
+  };
 }
 
 function setSyncState(state, msg = '') {
@@ -132,7 +140,7 @@ async function syncNow() {
     let done = false;
     for (let attempt = 0; attempt < 3 && !done; attempt++) {
       const res = await ghFetch('/contents/' + DATA_PATH);
-      let remote = { quizzes: [], deleted: {} };
+      let remote = { quizzes: [], deleted: {}, diagrams: [] };
       let sha;
       if (res.status === 200) {
         const j = await res.json();
@@ -159,14 +167,17 @@ async function syncNow() {
         if (!put.ok) throw new Error(httpMessage(put.status));
       }
 
-      const localChanged = mergedStr !== JSON.stringify(mergeDb(db, { quizzes: [], deleted: {} }));
+      const localChanged = mergedStr !== JSON.stringify(mergeDb(db, {}));
       db = merged;
       writeLocal();
-      setSyncState('ok');
-      if (localChanged && ['home', 'subject', 'settings'].includes(state.screen)) {
-        if (state.screen === 'subject' && !getQuiz(state.id)) go('home'); else render();
-      }
       done = true;
+      const imagesChanged = await syncImages();
+      setSyncState('ok');
+      if ((localChanged || imagesChanged) && ['home', 'themes', 'subject', 'settings', 'diagrams', 'diagram'].includes(state.screen)) {
+        if (state.screen === 'subject' && !getQuiz(state.id)) go('themes');
+        else if (state.screen === 'diagram' && !getDiagram(state.id)) go('diagrams');
+        else if (!(state.screen === 'diagram' && state.edit)) { const y = window.scrollY; render(); window.scrollTo(0, y); }
+      }
     }
     if (!done) throw new Error('Conflit de synchro, nouvel essai plus tard.');
   } catch (e) {
@@ -176,6 +187,96 @@ async function syncNow() {
     syncing = false;
     if (syncAgain) { syncAgain = false; scheduleSync(300); }
   }
+}
+
+/* ---------- Images des schémas (IndexedDB + dossier schemas/ du dépôt) ---------- */
+const IMG_DIR = 'schemas';
+const Images = (() => {
+  let dbp;
+  const open = () => dbp || (dbp = new Promise((res, rej) => {
+    const r = indexedDB.open('revisions', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('images');
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  }));
+  const run = (mode, fn) => open().then(idb => new Promise((res, rej) => {
+    const t = idb.transaction('images', mode);
+    const req = fn(t.objectStore('images'));
+    t.oncomplete = () => res(req ? req.result : undefined);
+    t.onerror = () => rej(t.error);
+  }));
+  const urls = new Map();
+  return {
+    get: id => run('readonly', st => st.get(id)),
+    set: (id, blob) => { urls.delete(id); return run('readwrite', st => st.put(blob, id)); },
+    del: id => { urls.delete(id); return run('readwrite', st => st.delete(id)); },
+    keys: () => run('readonly', st => st.getAllKeys()),
+    async url(id) {
+      if (urls.has(id)) return urls.get(id);
+      const blob = await this.get(id);
+      if (!blob) return null;
+      const u = URL.createObjectURL(blob);
+      urls.set(id, u);
+      return u;
+    },
+  };
+})();
+
+function blobToBase64(blob) {
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(String(r.result).split(',')[1]);
+    r.onerror = () => rej(r.error);
+    r.readAsDataURL(blob);
+  });
+}
+function base64ToBlob(b64, type = 'image/jpeg') {
+  const bin = atob(b64.replace(/\s/g, ''));
+  return new Blob([Uint8Array.from(bin, c => c.charCodeAt(0))], { type });
+}
+
+// Renvoie true si des images ont été téléchargées ou supprimées sur cet appareil
+async function syncImages() {
+  let changed = false;
+  const res = await ghFetch('/contents/' + IMG_DIR);
+  const remote = new Map();
+  if (res.status === 200) {
+    (await res.json()).forEach(f => { if (f.type === 'file') remote.set(f.name.replace(/\.jpg$/, ''), f.sha); });
+  } else if (res.status !== 404) {
+    throw new Error(httpMessage(res.status));
+  }
+  const local = new Set(await Images.keys());
+  for (const d of db.diagrams) {
+    if (local.has(d.id) && !remote.has(d.id)) {
+      const blob = await Images.get(d.id);
+      const put = await ghFetch(`/contents/${IMG_DIR}/${d.id}.jpg`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: 'Schéma : ' + d.title, content: await blobToBase64(blob) }),
+      });
+      if (!put.ok && put.status !== 422) throw new Error(httpMessage(put.status));
+    } else if (!local.has(d.id) && remote.has(d.id)) {
+      const get = await ghFetch(`/contents/${IMG_DIR}/${d.id}.jpg`);
+      if (!get.ok) throw new Error(httpMessage(get.status));
+      const j = await get.json();
+      if (j.content) { await Images.set(d.id, base64ToBlob(j.content)); changed = true; }
+    }
+  }
+  // Schémas supprimés : on retire l'image du dépôt et de l'appareil
+  const alive = new Set(db.diagrams.map(d => d.id));
+  for (const [id, sha] of remote) {
+    if (!alive.has(id) && db.deleted[id]) {
+      await ghFetch(`/contents/${IMG_DIR}/${id}.jpg`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: 'Schéma supprimé', sha }),
+      });
+    }
+  }
+  for (const id of local) {
+    if (!alive.has(id) && db.deleted[id]) { await Images.del(id); changed = true; }
+  }
+  return changed;
 }
 
 function syncPill() {
@@ -243,6 +344,7 @@ const ICONS = {
   shuffle: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h5v5M4 20 21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>',
   list: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="5" cy="6" r="1.6"/><circle cx="5" cy="12" r="1.6"/><circle cx="5" cy="18" r="1.6"/><path d="M10 6h10M10 12h10M10 18h10"/></svg>',
   dash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 12h12"/></svg>',
+  diagram: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><rect x="6" y="8" width="6" height="3" rx="1" fill="currentColor"/><rect x="12" y="14" width="6" height="3" rx="1" fill="currentColor"/></svg>',
   check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
   gear: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>',
 };
@@ -377,6 +479,7 @@ function render() {
   const view = VIEWS[state.screen] || VIEWS.home;
   $app.innerHTML = view();
   if (state.screen === 'import') bindImport();
+  hydrateImages();
 }
 
 const VIEWS = {
@@ -390,8 +493,16 @@ const VIEWS = {
       </div>
       <header class="home-head">
         <h1>Mes révisions</h1>
-        ${list.length ? `<p class="muted">${plural(list.length, 'thème', 'thèmes')}</p>` : ''}
       </header>`;
+
+    const diagramsItem = `
+        <button class="menu-item" data-action="diagrams">
+          <span class="menu-icon" aria-hidden="true">${ICONS.diagram}</span>
+          <span class="menu-text">
+            <span class="menu-title">Mes schémas</span>
+            <span class="menu-sub">${db.diagrams.length ? plural(db.diagrams.length, 'schéma', 'schémas') + ', touche les cases pour révéler' : 'Importe un schéma et cache ses textes'}</span>
+          </span>
+        </button>`;
 
     if (!list.length) {
       return head + `
@@ -405,6 +516,7 @@ const VIEWS = {
 - Turin</pre>
           <p class="muted small">Laisse une ligne vide entre deux questions.</p>
         </div>
+        <div class="menu" style="margin-top:12px">${diagramsItem}</div>
         ${dock(`<button class="btn btn-primary" data-action="new-import">Importer un thème</button>`)}`;
     }
 
@@ -426,6 +538,7 @@ const VIEWS = {
             <span class="menu-sub">${plural(list.length, 'thème', 'thèmes')}, ${plural(totalQ, 'question', 'questions')}${totalRev ? `, <span class="badge-err">${totalRev} à revoir</span>` : ''}</span>
           </span>
         </button>
+        ${diagramsItem}
       </div>
       ${dock(`<button class="btn btn-secondary" data-action="new-import">Importer un thème</button>`)}`;
   },
@@ -656,6 +769,92 @@ const VIEWS = {
         : `<button class="btn btn-primary" ${back}</button>`)}`;
   },
 
+  /* ----- Liste des schémas ----- */
+  diagrams() {
+    const list = db.diagrams.slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    return `
+      <div class="topbar">
+        <button class="icon-btn" data-action="home" aria-label="Retour à l'accueil">${ICONS.back}</button>
+      </div>
+      <h1>Mes schémas</h1>
+      <p class="muted" style="margin:8px 0 18px">Importe un schéma, dessine des cases sur les textes à retenir, puis touche chaque case pour vérifier.</p>
+      ${list.length ? `<ul class="diagram-list">
+        ${list.map(d => `<li><button class="diagram-card" data-action="open-diagram" data-id="${d.id}">
+          <span class="thumb"><img data-img="${d.id}" alt=""></span>
+          <span class="diagram-meta">
+            <h3>${esc(d.title)}</h3>
+            <span class="muted small">${d.zones.length ? plural(d.zones.length, 'case', 'cases') : 'Aucune case : touche pour en dessiner'}</span>
+          </span>
+        </button></li>`).join('')}
+      </ul>` : ''}
+      ${dock(`<button class="btn btn-primary" data-action="new-diagram">Importer un schéma</button>`)}`;
+  },
+
+  /* ----- Un schéma : révision ou modification ----- */
+  diagram() {
+    const d = getDiagram(state.id);
+    if (!d) return VIEWS.diagrams();
+    const edit = state.edit;
+    const open = state.revealed;
+    const zoom = state.zoom || 1;
+    const zones = d.zones.map(z => {
+      const cls = edit ? (state.selZone === z.id ? 'sel' : '') : (open.has(z.id) ? 'open' : '');
+      return `<button class="zone ${cls}" data-action="${edit ? 'zone-select' : 'zone-tap'}" data-z="${z.id}"
+        style="left:${z.x * 100}%;top:${z.y * 100}%;width:${z.w * 100}%;height:${z.h * 100}%"
+        aria-label="${edit ? 'Case' : open.has(z.id) ? 'Case révélée' : 'Case cachée, toucher pour révéler'}"></button>`;
+    }).join('');
+
+    const head = edit ? `
+      <div class="field">
+        <label for="dg-title">Nom du schéma</label>
+        <input id="dg-title" type="text" value="${esc(d.title)}" autocomplete="off">
+      </div>
+      <div class="seg" role="group" aria-label="Outil">
+        <button class="${state.tool !== 'move' ? 'on' : ''}" data-action="tool" data-t="draw">Dessiner des cases</button>
+        <button class="${state.tool === 'move' ? 'on' : ''}" data-action="tool" data-t="move">Faire défiler</button>
+      </div>
+      <p class="muted small" style="margin:10px 0 12px">${state.tool === 'move'
+        ? "Fais défiler l'image zoomée, puis repasse sur « Dessiner des cases »."
+        : 'Fais glisser ton doigt sur un texte pour le cacher. Touche une case pour la sélectionner.'}</p>`
+      : `
+      <h1>${esc(d.title)}</h1>
+      <p class="muted" id="dg-count" style="margin:6px 0 14px">${d.zones.length
+        ? `${open.size} / ${plural(d.zones.length, 'case révélée', 'cases révélées')}`
+        : 'Aucune case pour le moment. Touche « Modifier » pour en dessiner.'}</p>`;
+
+    return `
+      <div class="topbar">
+        <button class="icon-btn" data-action="${edit ? 'diagram-done' : 'diagrams'}" aria-label="Retour">${ICONS.back}</button>
+        <div class="zoom" role="group" aria-label="Zoom">
+          <button class="icon-btn" data-action="zoom" data-d="-1" aria-label="Dézoomer" ${zoom <= 1 ? 'disabled' : ''}>−</button>
+          <span class="zoom-val">${Math.round(zoom * 100)} %</span>
+          <button class="icon-btn" data-action="zoom" data-d="1" aria-label="Zoomer" ${zoom >= 4 ? 'disabled' : ''}>+</button>
+        </div>
+        ${edit ? '<span></span>' : `<button class="icon-btn" data-action="diagram-edit">Modifier</button>`}
+      </div>
+      ${head}
+      <div class="stage-wrap ${edit && state.tool !== 'move' ? 'drawing' : ''}" id="stage-wrap">
+        <div class="stage ${edit ? 'editing' : ''}" id="stage" style="width:${zoom * 100}%">
+          <img data-img="${d.id}" alt="${esc(d.title)}" draggable="false">
+          ${zones}
+          <div class="zone draft" id="draft" hidden></div>
+        </div>
+      </div>
+      ${edit ? `
+        <div class="text-actions">
+          <button class="link-btn danger" data-action="delete-diagram">Supprimer le schéma</button>
+        </div>` : ''}
+      ${dock(edit
+        ? `${state.selZone ? '<button class="btn btn-danger" data-action="zone-delete">Supprimer cette case</button>' : ''}
+           <button class="btn btn-primary" data-action="diagram-done">Terminé</button>`
+        : d.zones.length
+          ? `<div class="row">
+               <button class="btn btn-secondary" data-action="hide-all">Tout cacher</button>
+               <button class="btn btn-secondary" data-action="reveal-all">Tout révéler</button>
+             </div>`
+          : `<button class="btn btn-primary" data-action="diagram-edit">Dessiner des cases</button>`)}`;
+  },
+
   /* ----- Réglages : synchronisation + sauvegarde ----- */
   settings() {
     const syncBlock = sync ? `
@@ -714,6 +913,119 @@ const VIEWS = {
 
 function dock(inner) {
   return `<div class="dock"><div class="dock-inner">${inner}</div></div>`;
+}
+
+/* ---------- Schémas : images, import, dessin ---------- */
+async function hydrateImages() {
+  for (const img of document.querySelectorAll('img[data-img]')) {
+    const url = await Images.url(img.dataset.img).catch(() => null);
+    if (url) { img.src = url; img.closest('.thumb, .stage')?.classList.remove('missing'); }
+    else img.closest('.thumb, .stage')?.classList.add('missing');
+  }
+}
+
+// Réduit l'image (1800 px max, JPEG) pour qu'elle reste légère et synchronisable
+function compressImage(file) {
+  return new Promise((resolve, reject) => {
+    const src = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = async () => {
+      URL.revokeObjectURL(src);
+      const scale = Math.min(1, 1800 / Math.max(img.naturalWidth, img.naturalHeight));
+      const w = Math.round(img.naturalWidth * scale), h = Math.round(img.naturalHeight * scale);
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h); // fond blanc pour les PNG transparents
+      ctx.drawImage(img, 0, 0, w, h);
+      let blob = null;
+      for (const q of [0.86, 0.75, 0.62, 0.5]) {
+        blob = await new Promise(r => c.toBlob(r, 'image/jpeg', q));
+        if (blob && blob.size < 700 * 1024) break;
+      }
+      blob ? resolve({ blob, w, h }) : reject(new Error('conversion'));
+    };
+    img.onerror = () => { URL.revokeObjectURL(src); reject(new Error('lecture')); };
+    img.src = src;
+  });
+}
+
+const $imageInput = document.createElement('input');
+$imageInput.type = 'file';
+$imageInput.accept = 'image/*';
+$imageInput.hidden = true;
+document.body.appendChild($imageInput);
+
+$imageInput.addEventListener('change', async () => {
+  const file = $imageInput.files[0];
+  if (!file) return;
+  toast('Préparation du schéma…');
+  try {
+    const { blob, w, h } = await compressImage(file);
+    const id = uid();
+    await Images.set(id, blob);
+    const title = file.name.replace(/\.[a-z0-9]+$/i, '').replace(/[_-]+/g, ' ').trim() || 'Schéma';
+    db.diagrams.push({ id, title, w, h, zones: [], createdAt: Date.now(), updatedAt: Date.now() });
+    saveDb();
+    toast('Schéma importé : dessine tes cases');
+    go('diagram', { id, edit: true, revealed: new Set(), tool: 'draw', zoom: 1 });
+  } catch (e) {
+    toast("Impossible de lire cette image. Essaie une capture d'écran en PNG ou JPEG.");
+  }
+});
+
+// Dessin d'une case au doigt (mode modification)
+let drawing = null;
+function stagePoint(e) {
+  const r = document.getElementById('stage').getBoundingClientRect();
+  return {
+    x: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)),
+    y: Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)),
+  };
+}
+function boxFrom(a, b) {
+  return { x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), w: Math.abs(a.x - b.x), h: Math.abs(a.y - b.y) };
+}
+$app.addEventListener('pointerdown', e => {
+  if (state.screen !== 'diagram' || !state.edit || state.tool === 'move') return;
+  if (!e.target.closest('#stage') || e.target.closest('.zone:not(.draft)')) return;
+  e.preventDefault();
+  drawing = { start: stagePoint(e), id: e.pointerId };
+  document.getElementById('stage').setPointerCapture?.(e.pointerId);
+});
+$app.addEventListener('pointermove', e => {
+  if (!drawing || e.pointerId !== drawing.id) return;
+  const b = boxFrom(drawing.start, stagePoint(e));
+  const el = document.getElementById('draft');
+  el.hidden = false;
+  Object.assign(el.style, { left: b.x * 100 + '%', top: b.y * 100 + '%', width: b.w * 100 + '%', height: b.h * 100 + '%' });
+});
+function endDraw(e) {
+  if (!drawing || e.pointerId !== drawing.id) return;
+  const b = boxFrom(drawing.start, stagePoint(e));
+  drawing = null;
+  const d = getDiagram(state.id);
+  const r = document.getElementById('stage').getBoundingClientRect();
+  if (d && b.w * r.width >= 12 && b.h * r.height >= 8) { // assez grande pour être une vraie case
+    const z = { id: uid(), ...b };
+    d.zones.push(z);
+    d.updatedAt = Date.now();
+    state.selZone = null;
+    saveDb();
+  }
+  rerenderKeepScroll();
+}
+$app.addEventListener('pointerup', endDraw);
+$app.addEventListener('pointercancel', e => { if (drawing && e.pointerId === drawing.id) { drawing = null; rerenderKeepScroll(); } });
+
+function rerenderKeepScroll() {
+  const y = window.scrollY;
+  const wrap = document.getElementById('stage-wrap');
+  const sx = wrap ? wrap.scrollLeft : 0, sy = wrap ? wrap.scrollTop : 0;
+  render();
+  window.scrollTo(0, y);
+  const w2 = document.getElementById('stage-wrap');
+  if (w2) { w2.scrollLeft = sx; w2.scrollTop = sy; }
 }
 
 function findQ(item) {
@@ -969,7 +1281,12 @@ const ACTIONS = {
 
   export: async () => {
     const name = `revisions-sauvegarde-${new Date().toISOString().slice(0, 10)}.json`;
-    const blob = new Blob([JSON.stringify(db)], { type: 'application/json' });
+    const images = {};
+    for (const d of db.diagrams) {
+      const b = await Images.get(d.id).catch(() => null);
+      if (b) images[d.id] = await blobToBase64(b);
+    }
+    const blob = new Blob([JSON.stringify({ ...db, images })], { type: 'application/json' });
     try {
       const file = new File([blob], name, { type: 'application/json' });
       if (navigator.canShare && navigator.canShare({ files: [file] })) {
@@ -988,6 +1305,58 @@ const ACTIONS = {
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
   },
   restore: () => { $backupInput.value = ''; $backupInput.click(); },
+
+  /* ----- Schémas ----- */
+  diagrams: () => go('diagrams'),
+  'new-diagram': () => { $imageInput.value = ''; $imageInput.click(); },
+  'open-diagram': el => {
+    const d = getDiagram(el.dataset.id);
+    go('diagram', { id: d.id, edit: !d.zones.length, revealed: new Set(), tool: 'draw', zoom: 1 });
+  },
+  'zone-tap': el => {
+    const id = el.dataset.z;
+    if (state.revealed.has(id)) state.revealed.delete(id); else state.revealed.add(id);
+    el.classList.toggle('open', state.revealed.has(id));
+    const d = getDiagram(state.id);
+    const p = document.getElementById('dg-count');
+    if (p) p.textContent = `${state.revealed.size} / ${plural(d.zones.length, 'case révélée', 'cases révélées')}`;
+    if (state.revealed.size === d.zones.length && d.zones.length > 1 && state.revealed.has(id)) toast('Toutes les cases sont révélées');
+  },
+  'hide-all': () => { state.revealed = new Set(); rerenderKeepScroll(); },
+  'reveal-all': () => { state.revealed = new Set(getDiagram(state.id).zones.map(z => z.id)); rerenderKeepScroll(); },
+  'diagram-edit': () => { state.edit = true; state.selZone = null; state.tool = 'draw'; rerenderKeepScroll(); },
+  'diagram-done': () => {
+    state.edit = false; state.selZone = null; state.revealed = new Set();
+    const d = getDiagram(state.id);
+    if (d && !d.zones.length) { go('diagrams'); return; }
+    rerenderKeepScroll();
+  },
+  'zone-select': el => { state.selZone = state.selZone === el.dataset.z ? null : el.dataset.z; rerenderKeepScroll(); },
+  'zone-delete': () => {
+    const d = getDiagram(state.id);
+    d.zones = d.zones.filter(z => z.id !== state.selZone);
+    d.updatedAt = Date.now();
+    state.selZone = null;
+    saveDb();
+    rerenderKeepScroll();
+  },
+  tool: el => { state.tool = el.dataset.t; state.selZone = null; rerenderKeepScroll(); },
+  zoom: el => {
+    const steps = [1, 1.5, 2, 3, 4];
+    const i = Math.max(0, steps.indexOf(state.zoom || 1) + Number(el.dataset.d));
+    state.zoom = steps[Math.min(i, steps.length - 1)];
+    rerenderKeepScroll();
+  },
+  'delete-diagram': () => {
+    const d = getDiagram(state.id);
+    if (!confirm(`Supprimer le schéma « ${d.title} » ?`)) return;
+    db.diagrams = db.diagrams.filter(x => x.id !== d.id);
+    db.deleted[d.id] = Date.now();
+    Images.del(d.id).catch(() => {});
+    saveDb();
+    toast('Schéma supprimé');
+    go('diagrams');
+  },
 
   /* ----- Synchronisation ----- */
   'connect-code': () => {
@@ -1044,6 +1413,14 @@ async function connect(cfg) {
   else toast(syncState.msg || 'Connecté, mais la synchro a échoué.');
 }
 
+// Nom du schéma (mode modification)
+$app.addEventListener('change', e => {
+  if (e.target.id !== 'dg-title') return;
+  const d = getDiagram(state.id);
+  const t = e.target.value.trim();
+  if (d && t && t !== d.title) { d.title = t; d.updatedAt = Date.now(); saveDb(); }
+});
+
 // Jauge du nombre de questions
 $app.addEventListener('input', e => {
   if (e.target.id === 'count-range') setCount(e.target.value, false);
@@ -1072,7 +1449,8 @@ $backupInput.addEventListener('change', async () => {
     const data = JSON.parse(await readTextFile(file));
     if (!data || !Array.isArray(data.quizzes)) throw new Error('format');
     if (!confirm(`Restaurer ${plural(data.quizzes.length, 'thème', 'thèmes')} ? Les données actuelles seront remplacées.`)) return;
-    db = { quizzes: data.quizzes, deleted: data.deleted || {} };
+    db = { quizzes: data.quizzes, deleted: data.deleted || {}, diagrams: data.diagrams || [] };
+    for (const [id, b64] of Object.entries(data.images || {})) await Images.set(id, base64ToBlob(b64));
     saveDb();
     toast('Sauvegarde restaurée');
     go('home');
