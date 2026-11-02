@@ -240,6 +240,9 @@ function toast(msg) {
 const ICONS = {
   back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>',
   close: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+  shuffle: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h5v5M4 20 21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>',
+  list: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="5" cy="6" r="1.6"/><circle cx="5" cy="12" r="1.6"/><circle cx="5" cy="18" r="1.6"/><path d="M10 6h10M10 12h10M10 18h10"/></svg>',
+  check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
   gear: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>',
 };
 
@@ -386,13 +389,13 @@ const VIEWS = {
       </div>
       <header class="home-head">
         <h1>Mes révisions</h1>
-        ${list.length ? `<p class="muted">${plural(list.length, 'matière', 'matières')}</p>` : ''}
+        ${list.length ? `<p class="muted">${plural(list.length, 'thème', 'thèmes')}</p>` : ''}
       </header>`;
 
     if (!list.length) {
       return head + `
         <div class="empty">
-          <h2>Ajoute ton premier quiz</h2>
+          <h2>Ajoute ton premier thème</h2>
           <p>Écris tes questions dans un fichier .txt, puis importe-le ici. Chaque question a 4 réponses, la bonne commence par une étoile.</p>
 <pre>Quelle est la capitale de l'Italie ?
 * Rome
@@ -401,11 +404,40 @@ const VIEWS = {
 - Turin</pre>
           <p class="muted small">Laisse une ligne vide entre deux questions.</p>
         </div>
-        ${dock(`<button class="btn btn-primary" data-action="new-import">Importer un quiz</button>`)}`;
+        ${dock(`<button class="btn btn-primary" data-action="new-import">Importer un thème</button>`)}`;
     }
 
+    const totalQ = list.reduce((n, q) => n + q.questions.length, 0);
+    const totalRev = list.reduce((n, q) => n + toReview(q).length, 0);
     return head + `
-      <ul class="subject-list">
+      <div class="menu">
+        <button class="menu-item" data-action="mix">
+          <span class="menu-icon" aria-hidden="true">${ICONS.shuffle}</span>
+          <span class="menu-text">
+            <span class="menu-title">Commencer un quiz</span>
+            <span class="menu-sub">Questions mélangées de tous tes thèmes, tu choisis combien</span>
+          </span>
+        </button>
+        <button class="menu-item" data-action="themes">
+          <span class="menu-icon" aria-hidden="true">${ICONS.list}</span>
+          <span class="menu-text">
+            <span class="menu-title">Commencer un thème</span>
+            <span class="menu-sub">${plural(list.length, 'thème', 'thèmes')}, ${plural(totalQ, 'question', 'questions')}${totalRev ? `, <span class="badge-err">${totalRev} à revoir</span>` : ''}</span>
+          </span>
+        </button>
+      </div>
+      ${dock(`<button class="btn btn-secondary" data-action="new-import">Importer un thème</button>`)}`;
+  },
+
+  /* ----- Liste des thèmes ----- */
+  themes() {
+    const list = db.quizzes.slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    return `
+      <div class="topbar">
+        <button class="icon-btn" data-action="home" aria-label="Retour à l'accueil">${ICONS.back}</button>
+      </div>
+      <h1 style="margin-bottom:18px">Mes thèmes</h1>
+      ${list.length ? `<ul class="subject-list">
         ${list.map(q => {
           const rev = toReview(q).length;
           const best = bestScore(q);
@@ -415,8 +447,43 @@ const VIEWS = {
             <span class="score">${best === null ? '–' : best + ' %'}<small>${best === null ? 'pas encore fait' : 'meilleur'}</small></span>
           </button></li>`;
         }).join('')}
-      </ul>
-      ${dock(`<button class="btn btn-primary" data-action="new-import">Importer un quiz</button>`)}`;
+      </ul>` : '<p class="muted">Aucun thème pour le moment.</p>'}
+      ${dock(`<button class="btn btn-primary" data-action="new-import">Importer un thème</button>`)}`;
+  },
+
+  /* ----- Quiz mélangé ----- */
+  mix() {
+    const list = db.quizzes.slice().sort((a, b) => a.title.localeCompare(b.title, 'fr'));
+    const sel = state.sel;
+    const total = list.filter(q => sel.has(q.id)).reduce((n, q) => n + q.questions.length, 0);
+    const allOn = list.every(q => sel.has(q.id));
+    return `
+      <div class="topbar">
+        <button class="icon-btn" data-action="home" aria-label="Retour à l'accueil">${ICONS.back}</button>
+      </div>
+      <h1>Commencer un quiz</h1>
+      <p class="muted" style="margin-top:8px">Les questions sont tirées au hasard dans les thèmes cochés.</p>
+
+      ${total ? countPicker(total) : ''}
+
+      <div class="section">
+        <div class="section-head">
+          <h2>Thèmes inclus</h2>
+          <button class="link-btn" data-action="toggle-all">${allOn ? 'Tout décocher' : 'Tout cocher'}</button>
+        </div>
+        <div class="check-list">
+          ${list.map(q => `
+            <button class="check-row ${sel.has(q.id) ? 'on' : ''}" data-action="toggle-theme" data-id="${q.id}" role="checkbox" aria-checked="${sel.has(q.id)}">
+              <span class="box" aria-hidden="true">${ICONS.check}</span>
+              <span class="check-title">${esc(q.title)}</span>
+              <span class="muted small">${q.questions.length}</span>
+            </button>`).join('')}
+        </div>
+      </div>
+
+      ${dock(total
+        ? `<button class="btn btn-primary" id="start-btn" data-action="start-mix">${startLabel()}</button>`
+        : `<button class="btn btn-primary" disabled>Coche au moins un thème</button>`)}`;
   },
 
   /* ----- Import ----- */
@@ -426,7 +493,7 @@ const VIEWS = {
       <div class="topbar">
         <button class="icon-btn" data-action="${imp.replaceId ? 'open' : 'home'}" data-id="${imp.replaceId || ''}" aria-label="Retour">${ICONS.back}</button>
       </div>
-      <h1>${imp.replaceId ? 'Remplacer les questions' : 'Nouveau quiz'}</h1>
+      <h1>${imp.replaceId ? 'Remplacer les questions' : 'Nouveau thème'}</h1>
       <p class="muted" style="margin:8px 0 22px">Choisis ton fichier .txt ou colle son contenu.</p>
 
       <button class="btn btn-secondary" data-action="pick-file">Choisir un fichier .txt</button>
@@ -437,7 +504,7 @@ const VIEWS = {
         <textarea id="imp-text" placeholder="Quelle est la capitale de l'Italie ?&#10;* Rome&#10;- Milan&#10;- Naples&#10;- Turin" spellcheck="false" autocapitalize="off">${esc(imp.text)}</textarea>
       </div>
       <div class="field">
-        <label for="imp-title">Nom de la matière</label>
+        <label for="imp-title">Nom du thème</label>
         <input id="imp-title" type="text" value="${esc(imp.title)}" placeholder="Ex. : Droit des contrats, chapitre 2" autocomplete="off">
       </div>
       <div id="imp-report"></div>
@@ -451,17 +518,15 @@ const VIEWS = {
     const rev = toReview(quiz);
     const best = bestScore(quiz);
     const total = quiz.questions.length;
-    const count = state.count || 'all';
     const hist = quiz.history.slice(-8).reverse();
     const missed = quiz.questions
       .filter(q => quiz.stats[q.id] && quiz.stats[q.id].wrong > 0)
       .sort((a, b) => quiz.stats[b.id].wrong - quiz.stats[a.id].wrong)
       .slice(0, 5);
-    const sizes = [10, 20].filter(n => n < total);
 
     return `
       <div class="topbar">
-        <button class="icon-btn" data-action="home" aria-label="Retour à l'accueil">${ICONS.back}</button>
+        <button class="icon-btn" data-action="themes" aria-label="Retour aux thèmes">${ICONS.back}</button>
       </div>
       <h1>${esc(quiz.title)}</h1>
 
@@ -471,14 +536,7 @@ const VIEWS = {
         <div class="stat ${rev.length ? 'err' : ''}"><b>${rev.length}</b><span>à revoir</span></div>
       </div>
 
-      ${sizes.length ? `
-      <div class="section">
-        <h2>Nombre de questions</h2>
-        <div class="row" style="grid-template-columns:repeat(${sizes.length + 1},1fr)">
-          ${sizes.map(n => `<button class="btn ${count === n ? 'btn-primary' : 'btn-secondary'}" style="min-height:46px;font-size:16px" data-action="count" data-n="${n}">${n}</button>`).join('')}
-          <button class="btn ${count === 'all' ? 'btn-primary' : 'btn-secondary'}" style="min-height:46px;font-size:16px" data-action="count" data-n="all">Toutes</button>
-        </div>
-      </div>` : ''}
+      ${countPicker(total)}
 
       ${missed.length ? `
       <div class="section">
@@ -496,18 +554,18 @@ const VIEWS = {
       <div class="section">
         <h2>Historique</h2>
         <ul class="history">
-          ${hist.map(h => `<li><span>${fmtDate(h.date)}${h.mode !== 'all' ? ' <span class="muted">(erreurs)</span>' : ''}</span><span class="s">${h.score}/${h.total}</span></li>`).join('')}
+          ${hist.map(h => `<li><span>${fmtDate(h.date)}${h.mode === 'mix' ? ' <span class="muted">(quiz mélangé)</span>' : h.mode !== 'all' ? ' <span class="muted">(erreurs)</span>' : ''}</span><span class="s">${h.score}/${h.total}</span></li>`).join('')}
         </ul>
       </div>` : ''}
 
       <div class="text-actions">
         <button class="link-btn" data-action="replace" data-id="${quiz.id}">Remplacer les questions</button>
         <button class="link-btn" data-action="reset-stats" data-id="${quiz.id}">Effacer mon suivi</button>
-        <button class="link-btn danger" data-action="delete" data-id="${quiz.id}">Supprimer la matière</button>
+        <button class="link-btn danger" data-action="delete" data-id="${quiz.id}">Supprimer le thème</button>
       </div>
 
       ${dock(`
-        <button class="btn btn-primary" data-action="start" data-mode="all">Commencer le quiz</button>
+        <button class="btn btn-primary" id="start-btn" data-action="start" data-mode="all">${startLabel()}</button>
         ${rev.length ? `<button class="btn btn-secondary" data-action="start" data-mode="errors">Revoir mes ${plural(rev.length, 'erreur', 'erreurs')}</button>` : ''}
       `)}`;
   },
@@ -515,9 +573,15 @@ const VIEWS = {
   /* ----- Quiz en cours ----- */
   play() {
     const s = state.session;
-    const quiz = getQuiz(s.quizId);
     const item = s.items[s.idx];
-    const q = quiz.questions.find(x => x.id === item.qid);
+    const quiz = getQuiz(item.quizId);
+    const q = findQ(item);
+    if (!q) { // question supprimée entre-temps (synchro) : on passe à la suivante
+      s.items.splice(s.idx, 1);
+      if (!s.items.length) return VIEWS.home();
+      s.idx = Math.min(s.idx, s.items.length - 1);
+      return VIEWS.play();
+    }
     const n = s.items.length;
     const done = item.picked !== null;
     const last = s.idx === n - 1;
@@ -540,6 +604,7 @@ const VIEWS = {
         <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="${n}" aria-valuenow="${s.idx + (done ? 1 : 0)}"><span style="width:${((s.idx + (done ? 1 : 0)) / n) * 100}%"></span></div>
         <span class="q-count">${s.idx + 1} / ${n}</span>
       </div>
+      ${s.origin.type === 'mix' ? `<p class="q-theme">${esc(quiz.title)}</p>` : ''}
       <p class="question">${esc(q.q)}</p>
       <div class="choices ${done ? 'answered' : ''}">${choices}</div>
       ${done && item.ok ? `<p class="verdict good">Bonne réponse</p>` : ''}
@@ -550,12 +615,14 @@ const VIEWS = {
   /* ----- Résultats ----- */
   result() {
     const s = state.session;
-    const quiz = getQuiz(s.quizId);
     const score = s.items.filter(i => i.ok).length;
     const n = s.items.length;
     const p = pct(score, n);
-    const mistakes = s.items.filter(i => !i.ok);
-    const msg = p === 100 ? 'Sans faute !' : p >= 80 ? 'Très bien, presque parfait.' : p >= 50 ? 'Bonne base, continue.' : 'Encore un peu de travail sur cette matière.';
+    const mistakes = s.items.filter(i => !i.ok && findQ(i));
+    const msg = p === 100 ? 'Sans faute !' : p >= 80 ? 'Très bien, presque parfait.' : p >= 50 ? 'Bonne base, continue.' : 'Encore un peu de travail.';
+    const back = s.origin.type === 'mix'
+      ? `data-action="home">Retour à l'accueil`
+      : `data-action="open" data-id="${s.origin.id}">Retour au thème`;
 
     return `
       <div class="result-hero">
@@ -568,8 +635,9 @@ const VIEWS = {
       <div class="section">
         <h2>Tes erreurs</h2>
         ${mistakes.map(i => {
-          const q = quiz.questions.find(x => x.id === i.qid);
+          const q = findQ(i);
           return `<div class="mistake">
+            ${s.origin.type === 'mix' ? `<span class="q-theme small">${esc(getQuiz(i.quizId).title)}</span>` : ''}
             <p class="q">${esc(q.q)}</p>
             <p class="a yours"><span class="dot"></span><span>${esc(q.choices[i.picked])}</span></p>
             <p class="a right"><span class="dot"></span><span>${esc(q.choices[q.answer])}</span></p>
@@ -580,8 +648,8 @@ const VIEWS = {
 
       ${dock(mistakes.length
         ? `<button class="btn btn-primary" data-action="retry">Refaire ces ${plural(mistakes.length, 'erreur', 'erreurs')}</button>
-           <button class="btn btn-secondary" data-action="open" data-id="${quiz.id}">Retour à la matière</button>`
-        : `<button class="btn btn-primary" data-action="open" data-id="${quiz.id}">Retour à la matière</button>`)}`;
+           <button class="btn btn-secondary" ${back}</button>`
+        : `<button class="btn btn-primary" ${back}</button>`)}`;
   },
 
   /* ----- Réglages : synchronisation + sauvegarde ----- */
@@ -644,6 +712,59 @@ function dock(inner) {
   return `<div class="dock"><div class="dock-inner">${inner}</div></div>`;
 }
 
+function findQ(item) {
+  const quiz = getQuiz(item.quizId);
+  return quiz ? quiz.questions.find(x => x.id === item.qid) : null;
+}
+
+/* ---------- Choix du nombre de questions ---------- */
+const COUNT_KEY = 'revisions.count';
+function preferredCount() {
+  try { return Number(localStorage.getItem(COUNT_KEY)) || 20; } catch (e) { return 20; }
+}
+function clampCount(n, total) {
+  n = Math.round(Number(n));
+  if (!n || n < 1) n = 1;
+  return Math.min(n, total);
+}
+function countPicker(total) {
+  state.total = total;
+  state.count = clampCount(state.want || preferredCount(), total); // « want » = le choix de l'utilisateur, gardé même si on décoche un thème
+  const n = state.count;
+  const presets = [10, 20, 50].filter(x => x < total);
+  return `
+    <div class="section">
+      <h2>Nombre de questions</h2>
+      <div class="counter">
+        <button class="step" data-action="count-step" data-d="-1" aria-label="Une question de moins">−</button>
+        <input id="count-input" type="number" inputmode="numeric" pattern="[0-9]*" min="1" max="${total}" value="${n}" aria-label="Nombre de questions">
+        <button class="step" data-action="count-step" data-d="1" aria-label="Une question de plus">+</button>
+      </div>
+      <p class="muted small counter-note">sur ${plural(total, 'question disponible', 'questions disponibles')}</p>
+      <div class="chips">
+        ${presets.map(x => `<button class="chip ${n === x ? 'on' : ''}" data-action="count-set" data-n="${x}">${x}</button>`).join('')}
+        <button class="chip ${n === total ? 'on' : ''}" data-action="count-set" data-n="${total}">Toutes</button>
+      </div>
+    </div>`;
+}
+function startLabel() {
+  return 'Lancer ' + plural(state.count || 1, 'question', 'questions');
+}
+function setCount(n, rerender) {
+  state.count = clampCount(n, state.total);
+  state.want = state.count;
+  try { localStorage.setItem(COUNT_KEY, String(state.count)); } catch (e) { /* rien */ }
+  if (rerender) {
+    const y = window.scrollY;
+    render();
+    window.scrollTo(0, y);
+  } else {
+    const btn = document.getElementById('start-btn');
+    if (btn) btn.textContent = startLabel();
+    document.querySelectorAll('.chip').forEach(c => c.classList.toggle('on', Number(c.dataset.n) === state.count));
+  }
+}
+
 /* ---------- Import : rapport en direct ---------- */
 function bindImport() {
   const $text = document.getElementById('imp-text');
@@ -678,16 +799,17 @@ function updateImportReport() {
   }
   $rep.innerHTML = html;
   $go.disabled = !questions.length || !title;
-  $go.textContent = !title && questions.length ? 'Donne un nom à la matière'
+  $go.textContent = !title && questions.length ? 'Donne un nom au thème'
     : questions.length ? `Importer ${plural(questions.length, 'question', 'questions')}` : 'Importer';
 }
 
 /* =========================================================
    Actions
    ========================================================= */
-function startSession(quizId, qids, mode) {
-  const items = qids.map(qid => ({ qid, order: shuffle([0, 1, 2, 3]), picked: null, ok: null }));
-  go('play', { session: { quizId, items, idx: 0, mode } });
+// items : [{ quizId, qid }] ; origin : { type: 'theme', id } ou { type: 'mix' }
+function startSession(pairs, mode, origin) {
+  const items = pairs.map(p => ({ quizId: p.quizId, qid: p.qid, order: shuffle([0, 1, 2, 3]), picked: null, ok: null }));
+  go('play', { session: { items, idx: 0, mode, origin } });
 }
 
 const ACTIONS = {
@@ -723,38 +845,50 @@ const ACTIONS = {
     go('subject', { id: quiz.id });
   },
 
-  count: el => {
-    const n = el.dataset.n === 'all' ? 'all' : Number(el.dataset.n);
-    state.count = n;
-    const y = window.scrollY;
-    render();
-    window.scrollTo(0, y);
+  themes: () => go('themes'),
+  mix: () => go('mix', { sel: new Set(db.quizzes.map(q => q.id)) }),
+  'toggle-theme': el => {
+    const id = el.dataset.id;
+    if (state.sel.has(id)) state.sel.delete(id); else state.sel.add(id);
+    const y = window.scrollY; render(); window.scrollTo(0, y);
   },
+  'toggle-all': () => {
+    const allOn = db.quizzes.every(q => state.sel.has(q.id));
+    state.sel = new Set(allOn ? [] : db.quizzes.map(q => q.id));
+    const y = window.scrollY; render(); window.scrollTo(0, y);
+  },
+  'count-step': el => setCount((state.count || 1) + Number(el.dataset.d), true),
+  'count-set': el => setCount(el.dataset.n, true),
 
   start: el => {
     const quiz = getQuiz(state.id);
-    const count = state.count || 'all';
-    let qids;
+    let pairs;
     if (el.dataset.mode === 'errors') {
-      qids = shuffle(toReview(quiz).map(q => q.id));
+      pairs = shuffle(toReview(quiz).map(q => ({ quizId: quiz.id, qid: q.id })));
     } else {
-      qids = shuffle(quiz.questions.map(q => q.id));
-      if (count !== 'all') qids = qids.slice(0, count);
+      pairs = shuffle(quiz.questions.map(q => ({ quizId: quiz.id, qid: q.id }))).slice(0, state.count || quiz.questions.length);
     }
-    if (!qids.length) return;
-    quiz.updatedAt = Date.now();
-    startSession(quiz.id, qids, el.dataset.mode);
+    if (!pairs.length) return;
+    startSession(pairs, el.dataset.mode, { type: 'theme', id: quiz.id });
+  },
+
+  'start-mix': () => {
+    const all = db.quizzes.filter(q => state.sel.has(q.id))
+      .flatMap(quiz => quiz.questions.map(q => ({ quizId: quiz.id, qid: q.id })));
+    const pairs = shuffle(all).slice(0, state.count || all.length);
+    if (!pairs.length) return;
+    startSession(pairs, 'mix', { type: 'mix' });
   },
 
   pick: el => {
     const s = state.session;
     const item = s.items[s.idx];
     if (item.picked !== null) return;
-    const quiz = getQuiz(s.quizId);
-    const q = quiz.questions.find(x => x.id === item.qid);
+    const q = findQ(item);
+    if (!q) return;
     item.picked = Number(el.dataset.c);
     item.ok = item.picked === q.answer;
-    recordAnswer(quiz, q.id, item.ok);
+    recordAnswer(getQuiz(item.quizId), q.id, item.ok);
     render();
   },
 
@@ -765,10 +899,20 @@ const ACTIONS = {
       render();
       window.scrollTo(0, 0);
     } else {
-      const quiz = getQuiz(s.quizId);
-      quiz.history.push({ date: Date.now(), score: s.items.filter(i => i.ok).length, total: s.items.length, mode: s.mode });
-      if (quiz.history.length > 100) quiz.history = quiz.history.slice(-100);
-      quiz.updatedAt = Date.now();
+      // Historique : une ligne par thème concerné
+      const byQuiz = new Map();
+      s.items.forEach(i => {
+        const g = byQuiz.get(i.quizId) || { score: 0, total: 0 };
+        g.total++; if (i.ok) g.score++;
+        byQuiz.set(i.quizId, g);
+      });
+      byQuiz.forEach((g, quizId) => {
+        const quiz = getQuiz(quizId);
+        if (!quiz) return;
+        quiz.history.push({ date: Date.now(), score: g.score, total: g.total, mode: s.mode });
+        if (quiz.history.length > 100) quiz.history = quiz.history.slice(-100);
+        quiz.updatedAt = Date.now();
+      });
       saveDb();
       go('result', { session: s });
     }
@@ -776,13 +920,15 @@ const ACTIONS = {
 
   quit: () => {
     if (confirm('Arrêter le quiz ? Les réponses déjà données restent enregistrées dans ton suivi.')) {
-      go('subject', { id: state.session.quizId });
+      const o = state.session.origin;
+      if (o.type === 'theme' && getQuiz(o.id)) go('subject', { id: o.id }); else go('home');
     }
   },
 
   retry: () => {
     const s = state.session;
-    startSession(s.quizId, shuffle(s.items.filter(i => !i.ok).map(i => i.qid)), 'retry');
+    const pairs = shuffle(s.items.filter(i => !i.ok && findQ(i)).map(i => ({ quizId: i.quizId, qid: i.qid })));
+    startSession(pairs, s.origin.type === 'mix' ? 'mix' : 'retry', s.origin);
   },
 
   'reset-stats': el => {
@@ -803,7 +949,7 @@ const ACTIONS = {
       db.quizzes = db.quizzes.filter(q => q.id !== quiz.id);
       db.deleted[quiz.id] = Date.now();
       saveDb();
-      toast('Matière supprimée');
+      toast('Thème supprimé');
       go('home');
     }
   },
@@ -885,6 +1031,14 @@ async function connect(cfg) {
   else toast(syncState.msg || 'Connecté, mais la synchro a échoué.');
 }
 
+// Saisie directe du nombre de questions
+$app.addEventListener('input', e => {
+  if (e.target.id === 'count-input' && e.target.value !== '') setCount(e.target.value, false);
+});
+$app.addEventListener('change', e => {
+  if (e.target.id === 'count-input') setCount(e.target.value || 1, true);
+});
+
 $app.addEventListener('click', e => {
   const el = e.target.closest('[data-action]');
   if (!el || el.disabled) return;
@@ -907,7 +1061,7 @@ $backupInput.addEventListener('change', async () => {
   try {
     const data = JSON.parse(await readTextFile(file));
     if (!data || !Array.isArray(data.quizzes)) throw new Error('format');
-    if (!confirm(`Restaurer ${plural(data.quizzes.length, 'matière', 'matières')} ? Les données actuelles seront remplacées.`)) return;
+    if (!confirm(`Restaurer ${plural(data.quizzes.length, 'thème', 'thèmes')} ? Les données actuelles seront remplacées.`)) return;
     db = { quizzes: data.quizzes, deleted: data.deleted || {} };
     saveDb();
     toast('Sauvegarde restaurée');
