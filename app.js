@@ -500,7 +500,7 @@ const VIEWS = {
           <span class="menu-icon" aria-hidden="true">${ICONS.diagram}</span>
           <span class="menu-text">
             <span class="menu-title">Mes schémas</span>
-            <span class="menu-sub">${db.diagrams.length ? plural(db.diagrams.length, 'schéma', 'schémas') + ', touche les cases pour révéler' : 'Importe un schéma et cache ses textes'}</span>
+            <span class="menu-sub">${db.diagrams.length ? plural(db.diagrams.length, 'schéma', 'schémas') + ', touche les cases pour révéler' : 'Aucun schéma pour le moment'}</span>
           </span>
         </button>`;
 
@@ -508,7 +508,7 @@ const VIEWS = {
       return head + `
         <div class="empty">
           <h2>Ajoute ton premier thème</h2>
-          <p>Écris tes questions dans un fichier .txt, puis importe-le ici. Chaque question a 4 réponses, la bonne commence par une étoile.</p>
+          <p>Écris tes questions dans un fichier .txt, puis importe-le depuis <strong>Réglages → Importer</strong>. Chaque question a 4 réponses, la bonne commence par une étoile.</p>
 <pre>Quelle est la capitale de l'Italie ?
 * Rome
 - Milan
@@ -517,7 +517,7 @@ const VIEWS = {
           <p class="muted small">Laisse une ligne vide entre deux questions.</p>
         </div>
         <div class="menu" style="margin-top:12px">${diagramsItem}</div>
-        ${dock(`<button class="btn btn-primary" data-action="new-import">Importer un thème</button>`)}`;
+        ${dock(`<button class="btn btn-primary" data-action="settings">Ouvrir les réglages pour importer</button>`)}`;
     }
 
     const totalQ = list.reduce((n, q) => n + q.questions.length, 0);
@@ -540,7 +540,7 @@ const VIEWS = {
         </button>
         ${diagramsItem}
       </div>
-      ${dock(`<button class="btn btn-secondary" data-action="new-import">Importer un thème</button>`)}`;
+`;
   },
 
   /* ----- Liste des thèmes ----- */
@@ -561,8 +561,7 @@ const VIEWS = {
             <span class="score">${best === null ? '–' : best + ' %'}<small>${best === null ? 'pas encore fait' : 'meilleur'}</small></span>
           </button></li>`;
         }).join('')}
-      </ul>` : '<p class="muted">Aucun thème pour le moment.</p>'}
-      ${dock(`<button class="btn btn-primary" data-action="new-import">Importer un thème</button>`)}`;
+      </ul>` : '<p class="muted">Aucun thème pour le moment. Importe-en un depuis <strong>Réglages → Importer</strong>.</p>'}`;
   },
 
   /* ----- Quiz mélangé ----- */
@@ -608,7 +607,7 @@ const VIEWS = {
     const imp = state.imp;
     return `
       <div class="topbar">
-        <button class="icon-btn" data-action="${imp.replaceId ? 'open' : 'home'}" data-id="${imp.replaceId || ''}" aria-label="Retour">${ICONS.back}</button>
+        <button class="icon-btn" data-action="${imp.replaceId ? 'open' : 'settings'}" data-id="${imp.replaceId || ''}" aria-label="Retour">${ICONS.back}</button>
       </div>
       <h1>${imp.replaceId ? 'Remplacer les questions' : 'Nouveau thème'}</h1>
       <p class="muted" style="margin:8px 0 22px">Choisis ton fichier .txt ou colle son contenu.</p>
@@ -785,8 +784,8 @@ const VIEWS = {
     const empty = tab === 'study'
       ? `<div class="empty"><p>${all.length
           ? "Aucun schéma n'a encore de cases. Va dans l'onglet <strong>Modifier</strong> pour en dessiner."
-          : "Aucun schéma pour le moment. Va dans l'onglet <strong>Modifier</strong> pour en importer un."}</p></div>`
-      : `<div class="empty"><p>Importe une photo ou une capture d'écran de ton schéma, puis dessine des cases sur les textes à retenir.</p></div>`;
+          : 'Aucun schéma pour le moment. Importe-en un depuis <strong>Réglages → Importer</strong>.'}</p></div>`
+      : `<div class="empty"><p>Aucun schéma pour le moment. Importe une photo ou une capture d'écran depuis <strong>Réglages → Importer</strong>, puis dessine des cases sur les textes à retenir.</p></div>`;
 
     return `
       <div class="topbar">
@@ -798,7 +797,7 @@ const VIEWS = {
         ? 'Touche un schéma, puis touche ses cases pour révéler les textes.'
         : 'Touche un schéma pour dessiner ou supprimer ses cases.'}</p>
       ${list.length ? `<ul class="diagram-list">${list.map(card).join('')}</ul>` : empty}
-      ${tab === 'edit' ? dock(`<button class="btn btn-primary" data-action="new-diagram">Importer un schéma</button>`) : ''}`;
+`;
   },
 
   /* ----- Un schéma : onglet Réviser ou Modifier ----- */
@@ -905,6 +904,26 @@ const VIEWS = {
         <button class="icon-btn" data-action="home" aria-label="Retour">${ICONS.back}</button>
       </div>
       <h1>Réglages</h1>
+
+      <div class="section">
+        <h2>Importer</h2>
+        <div class="import-grid">
+          <button class="import-card" data-action="new-import">
+            <span class="menu-icon" aria-hidden="true">${ICONS.list}</span>
+            <span class="menu-text">
+              <span class="menu-title">Un thème de questions</span>
+              <span class="menu-sub">Fichier .txt ou texte collé</span>
+            </span>
+          </button>
+          <button class="import-card" data-action="new-diagram">
+            <span class="menu-icon" aria-hidden="true">${ICONS.diagram}</span>
+            <span class="menu-text">
+              <span class="menu-title">Un schéma</span>
+              <span class="menu-sub">Photo ou capture d'écran</span>
+            </span>
+          </button>
+        </div>
+      </div>
 
       <div class="section">
         <h2>Synchronisation</h2>

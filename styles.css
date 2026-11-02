@@ -274,6 +274,14 @@ p { margin: 0; }
 .menu-title { font-family: var(--display); font-size: 21px; font-weight: 800; line-height: 1.2; }
 .menu-sub { font-size: 15px; color: var(--muted); }
 
+/* ---------- Réglages : importer ---------- */
+.import-grid { display: grid; gap: 10px; }
+.import-card {
+  width: 100%; text-align: left; border: 0;
+  display: grid; grid-template-columns: 56px 1fr; align-items: center; gap: 16px;
+  background: var(--sheet); border-radius: var(--radius-big); padding: 16px 18px;
+}
+
 /* ---------- Nombre de questions (jauge) ---------- */
 .gauge { background: var(--sheet); border-radius: var(--radius-big); padding: 16px 14px 12px; }
 .gauge-value { text-align: center; margin-bottom: 6px; }
