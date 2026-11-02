@@ -1,0 +1,40 @@
+# Exemple de fichier de quiz
+# Les lignes qui commencent par # sont ignorées.
+#
+# Règles :
+#  - une question sur une ligne (ou plusieurs lignes)
+#  - puis 4 réponses
+#  - la bonne réponse commence par *
+#  - les mauvaises commencent par - suivi d'un espace
+#  - une ligne vide entre deux questions
+# L'ordre des réponses est mélangé automatiquement dans l'app.
+
+Quelle est la capitale de l'Australie ?
+* Canberra
+- Sydney
+- Melbourne
+- Perth
+
+En quelle année a eu lieu la prise de la Bastille ?
+- 1776
+* 1789
+- 1799
+- 1815
+
+Quel organe produit l'insuline ?
+- Le foie
+- Les reins
+* Le pancréas
+- La rate
+
+Combien de côtés a un hexagone ?
+- 5
+- 7
+- 8
+* 6
+
+Quel est le symbole chimique du fer ?
+- Fr
+* Fe
+- F
+- Ir
