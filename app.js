@@ -769,28 +769,39 @@ const VIEWS = {
         : `<button class="btn btn-primary" ${back}</button>`)}`;
   },
 
-  /* ----- Liste des schémas ----- */
+  /* ----- Liste des schémas : onglets Réviser / Modifier ----- */
   diagrams() {
-    const list = db.diagrams.slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    const tab = state.dtab || lastDiagramTab;
+    lastDiagramTab = tab;
+    const all = db.diagrams.slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    const list = tab === 'study' ? all.filter(d => d.zones.length) : all;
+    const card = d => `<li><button class="diagram-card" data-action="open-diagram" data-id="${d.id}">
+          <span class="thumb"><img data-img="${d.id}" alt=""></span>
+          <span class="diagram-meta">
+            <h3>${esc(d.title)}</h3>
+            <span class="muted small">${d.zones.length ? plural(d.zones.length, 'case', 'cases') : 'Aucune case pour le moment'}</span>
+          </span>
+        </button></li>`;
+    const empty = tab === 'study'
+      ? `<div class="empty"><p>${all.length
+          ? "Aucun schéma n'a encore de cases. Va dans l'onglet <strong>Modifier</strong> pour en dessiner."
+          : "Aucun schéma pour le moment. Va dans l'onglet <strong>Modifier</strong> pour en importer un."}</p></div>`
+      : `<div class="empty"><p>Importe une photo ou une capture d'écran de ton schéma, puis dessine des cases sur les textes à retenir.</p></div>`;
+
     return `
       <div class="topbar">
         <button class="icon-btn" data-action="home" aria-label="Retour à l'accueil">${ICONS.back}</button>
       </div>
       <h1>Mes schémas</h1>
-      <p class="muted" style="margin:8px 0 18px">Importe un schéma, dessine des cases sur les textes à retenir, puis touche chaque case pour vérifier.</p>
-      ${list.length ? `<ul class="diagram-list">
-        ${list.map(d => `<li><button class="diagram-card" data-action="open-diagram" data-id="${d.id}">
-          <span class="thumb"><img data-img="${d.id}" alt=""></span>
-          <span class="diagram-meta">
-            <h3>${esc(d.title)}</h3>
-            <span class="muted small">${d.zones.length ? plural(d.zones.length, 'case', 'cases') : 'Aucune case : touche pour en dessiner'}</span>
-          </span>
-        </button></li>`).join('')}
-      </ul>` : ''}
-      ${dock(`<button class="btn btn-primary" data-action="new-diagram">Importer un schéma</button>`)}`;
+      ${diagramTabs(tab, 'list-tab')}
+      <p class="muted" style="margin:0 0 16px">${tab === 'study'
+        ? 'Touche un schéma, puis touche ses cases pour révéler les textes.'
+        : 'Touche un schéma pour dessiner ou supprimer ses cases.'}</p>
+      ${list.length ? `<ul class="diagram-list">${list.map(card).join('')}</ul>` : empty}
+      ${tab === 'edit' ? dock(`<button class="btn btn-primary" data-action="new-diagram">Importer un schéma</button>`) : ''}`;
   },
 
-  /* ----- Un schéma : révision ou modification ----- */
+  /* ----- Un schéma : onglet Réviser ou Modifier ----- */
   diagram() {
     const d = getDiagram(state.id);
     if (!d) return VIEWS.diagrams();
@@ -817,21 +828,21 @@ const VIEWS = {
         ? "Fais défiler l'image zoomée, puis repasse sur « Dessiner des cases »."
         : 'Fais glisser ton doigt sur un texte pour le cacher. Touche une case pour la sélectionner.'}</p>`
       : `
-      <h1>${esc(d.title)}</h1>
-      <p class="muted" id="dg-count" style="margin:6px 0 14px">${d.zones.length
+      <p class="muted" id="dg-count" style="margin:0 0 14px">${d.zones.length
         ? `${open.size} / ${plural(d.zones.length, 'case révélée', 'cases révélées')}`
-        : 'Aucune case pour le moment. Touche « Modifier » pour en dessiner.'}</p>`;
+        : "Aucune case pour le moment. Va dans l'onglet « Modifier » pour en dessiner."}</p>`;
 
     return `
       <div class="topbar">
-        <button class="icon-btn" data-action="${edit ? 'diagram-done' : 'diagrams'}" aria-label="Retour">${ICONS.back}</button>
+        <button class="icon-btn" data-action="diagrams-back" aria-label="Retour aux schémas">${ICONS.back}</button>
         <div class="zoom" role="group" aria-label="Zoom">
           <button class="icon-btn" data-action="zoom" data-d="-1" aria-label="Dézoomer" ${zoom <= 1 ? 'disabled' : ''}>−</button>
           <span class="zoom-val">${Math.round(zoom * 100)} %</span>
           <button class="icon-btn" data-action="zoom" data-d="1" aria-label="Zoomer" ${zoom >= 4 ? 'disabled' : ''}>+</button>
         </div>
-        ${edit ? '<span></span>' : `<button class="icon-btn" data-action="diagram-edit">Modifier</button>`}
       </div>
+      <h1 class="dg-title">${esc(d.title)}</h1>
+      ${diagramTabs(edit ? 'edit' : 'study', 'dg-mode')}
       ${head}
       <div class="stage-wrap ${edit && state.tool !== 'move' ? 'drawing' : ''}" id="stage-wrap">
         <div class="stage ${edit ? 'editing' : ''}" id="stage" style="width:${zoom * 100}%">
@@ -845,14 +856,15 @@ const VIEWS = {
           <button class="link-btn danger" data-action="delete-diagram">Supprimer le schéma</button>
         </div>` : ''}
       ${dock(edit
-        ? `${state.selZone ? '<button class="btn btn-danger" data-action="zone-delete">Supprimer cette case</button>' : ''}
-           <button class="btn btn-primary" data-action="diagram-done">Terminé</button>`
+        ? (state.selZone
+          ? '<button class="btn btn-danger" data-action="zone-delete">Supprimer cette case</button>'
+          : `<button class="btn btn-primary" data-action="dg-mode" data-m="study" ${d.zones.length ? '' : 'disabled'}>Réviser ce schéma</button>`)
         : d.zones.length
           ? `<div class="row">
                <button class="btn btn-secondary" data-action="hide-all">Tout cacher</button>
                <button class="btn btn-secondary" data-action="reveal-all">Tout révéler</button>
              </div>`
-          : `<button class="btn btn-primary" data-action="diagram-edit">Dessiner des cases</button>`)}`;
+          : `<button class="btn btn-primary" data-action="dg-mode" data-m="edit">Dessiner des cases</button>`)}`;
   },
 
   /* ----- Réglages : synchronisation + sauvegarde ----- */
@@ -968,6 +980,7 @@ $imageInput.addEventListener('change', async () => {
     db.diagrams.push({ id, title, w, h, zones: [], createdAt: Date.now(), updatedAt: Date.now() });
     saveDb();
     toast('Schéma importé : dessine tes cases');
+    lastDiagramTab = 'edit';
     go('diagram', { id, edit: true, revealed: new Set(), tool: 'draw', zoom: 1 });
   } catch (e) {
     toast("Impossible de lire cette image. Essaie une capture d'écran en PNG ou JPEG.");
@@ -1026,6 +1039,15 @@ function rerenderKeepScroll() {
   window.scrollTo(0, y);
   const w2 = document.getElementById('stage-wrap');
   if (w2) { w2.scrollLeft = sx; w2.scrollTop = sy; }
+}
+
+let lastDiagramTab = 'study';
+function diagramTabs(current, action) {
+  return `
+    <div class="tabs" role="tablist" aria-label="Mode">
+      <button role="tab" aria-selected="${current === 'study'}" class="${current === 'study' ? 'on' : ''}" data-action="${action}" data-m="study">Réviser</button>
+      <button role="tab" aria-selected="${current === 'edit'}" class="${current === 'edit' ? 'on' : ''}" data-action="${action}" data-m="edit">Modifier</button>
+    </div>`;
 }
 
 function findQ(item) {
@@ -1307,11 +1329,18 @@ const ACTIONS = {
   restore: () => { $backupInput.value = ''; $backupInput.click(); },
 
   /* ----- Schémas ----- */
-  diagrams: () => go('diagrams'),
+  diagrams: () => go('diagrams', { dtab: db.diagrams.some(d => d.zones.length) ? lastDiagramTab : 'edit' }),
+  'list-tab': el => go('diagrams', { dtab: el.dataset.m }),
+  'diagrams-back': () => go('diagrams', { dtab: state.edit ? 'edit' : 'study' }),
   'new-diagram': () => { $imageInput.value = ''; $imageInput.click(); },
   'open-diagram': el => {
-    const d = getDiagram(el.dataset.id);
-    go('diagram', { id: d.id, edit: !d.zones.length, revealed: new Set(), tool: 'draw', zoom: 1 });
+    go('diagram', { id: el.dataset.id, edit: lastDiagramTab === 'edit', revealed: new Set(), tool: 'draw', zoom: 1 });
+  },
+  'dg-mode': el => {
+    state.edit = el.dataset.m === 'edit';
+    lastDiagramTab = el.dataset.m;
+    state.selZone = null; state.tool = 'draw'; state.revealed = new Set();
+    rerenderKeepScroll();
   },
   'zone-tap': el => {
     const id = el.dataset.z;
@@ -1324,13 +1353,6 @@ const ACTIONS = {
   },
   'hide-all': () => { state.revealed = new Set(); rerenderKeepScroll(); },
   'reveal-all': () => { state.revealed = new Set(getDiagram(state.id).zones.map(z => z.id)); rerenderKeepScroll(); },
-  'diagram-edit': () => { state.edit = true; state.selZone = null; state.tool = 'draw'; rerenderKeepScroll(); },
-  'diagram-done': () => {
-    state.edit = false; state.selZone = null; state.revealed = new Set();
-    const d = getDiagram(state.id);
-    if (d && !d.zones.length) { go('diagrams'); return; }
-    rerenderKeepScroll();
-  },
   'zone-select': el => { state.selZone = state.selZone === el.dataset.z ? null : el.dataset.z; rerenderKeepScroll(); },
   'zone-delete': () => {
     const d = getDiagram(state.id);
@@ -1355,7 +1377,7 @@ const ACTIONS = {
     Images.del(d.id).catch(() => {});
     saveDb();
     toast('Schéma supprimé');
-    go('diagrams');
+    go('diagrams', { dtab: 'edit' });
   },
 
   /* ----- Synchronisation ----- */

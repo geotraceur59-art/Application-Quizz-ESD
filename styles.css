@@ -351,6 +351,18 @@ p { margin: 0; }
 .diagram-meta { display: grid; gap: 2px; }
 .diagram-meta h3 { overflow-wrap: anywhere; }
 
+.tabs {
+  display: grid; grid-template-columns: 1fr 1fr;
+  border-bottom: 2px solid var(--line); margin: 14px 0 16px;
+}
+.tabs button {
+  border: 0; background: transparent; min-height: 48px;
+  font-family: var(--display); font-size: 18px; font-weight: 700; color: var(--muted);
+  border-bottom: 3px solid transparent; margin-bottom: -2px;
+}
+.tabs button.on { color: var(--ink); border-bottom-color: var(--ink); }
+.dg-title { font-size: 28px; overflow-wrap: anywhere; }
+
 .zoom { display: flex; align-items: center; gap: 4px; }
 .zoom .icon-btn { font-size: 22px; padding: 0; }
 .zoom .icon-btn:disabled { opacity: .35; }
