@@ -1,7 +1,7 @@
 /* Service worker : permet à l'app de fonctionner sans connexion.
    Après chaque modification des fichiers, augmente le numéro de VERSION
    pour que l'iPhone télécharge la nouvelle version. */
-const VERSION = 'revisions-v2';
+const VERSION = 'revisions-v3';
 const FILES = [
   './',
   './index.html',
@@ -29,6 +29,8 @@ self.addEventListener('activate', event => {
 /* Réseau d'abord (pour avoir les mises à jour), cache si hors ligne */
 self.addEventListener('fetch', event => {
   if (event.request.method !== 'GET') return;
+  // Seulement les fichiers de l'app : jamais les échanges avec GitHub (synchro)
+  if (new URL(event.request.url).origin !== self.location.origin) return;
   event.respondWith(
     fetch(event.request)
       .then(res => {

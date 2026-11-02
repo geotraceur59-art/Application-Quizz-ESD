@@ -249,6 +249,21 @@ p { margin: 0; }
 
 .or { text-align: center; color: var(--muted); margin: 18px 0; font-size: 15px; }
 
+/* ---------- Réglages / synchro ---------- */
+.stack { display: grid; gap: 10px; margin-top: 16px; }
+.sync-pill {
+  display: inline-flex; align-items: center; gap: 8px;
+  border: 0; background: transparent; color: var(--muted);
+  font-size: 15px; font-weight: 600; min-height: 44px; padding: 0 4px;
+}
+.sync-pill .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+.sync-pill.ok .dot { background: var(--good); }
+.sync-pill.busy .dot { background: var(--ink); animation: pulse 1s ease-in-out infinite; }
+.sync-pill.error { color: var(--bad); }
+.sync-pill.error .dot { background: var(--bad); }
+.sync-err { color: var(--bad); }
+@keyframes pulse { 50% { opacity: .3; } }
+
 /* ---------- Toast ---------- */
 #toast {
   position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom) + 160px); z-index: 20;
