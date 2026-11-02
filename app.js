@@ -113,10 +113,22 @@ function parseQuizText(text) {
     cur = null;
   };
 
+  // Format « tout sur une ligne » (texte copié depuis Anki, un PDF, une page web…) :
+  //   Question ? * bonne - mauvaise - mauvaise - mauvaise
+  // Si la ligne contient une étoile suivie d'un espace, on la découpe
+  // devant chaque « * » ou « - » précédé et suivi d'un espace.
+  const expanded = [];
   lines.forEach((raw, i) => {
     const line = raw.trim();
-    const n = i + 1;
-    if (!line) { if (cur && cur.choices.length) finish(); return; }
+    if (line && !line.startsWith('#') && /(^|\s)\*\s/.test(line) && /\s[-–—•*]\s/.test(line)) {
+      line.split(/\s+(?=[*\-–—•]\s)/).forEach(part => expanded.push({ line: part.trim(), n: i + 1 }));
+    } else {
+      expanded.push({ line, n: i + 1 });
+    }
+  });
+
+  expanded.forEach(({ line, n }) => {
+    if (!line) { finish(); return; }
     if (line.startsWith('#')) return;
 
     const good = line.match(/^\*\s*(.+)$/);
