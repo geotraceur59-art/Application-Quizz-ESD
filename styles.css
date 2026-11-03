@@ -429,6 +429,49 @@ p { margin: 0; }
 .zone.draft { background: rgba(29, 58, 168, .2); border-style: dashed; pointer-events: none; }
 .zone.draft::after { content: none; }
 
+/* ---------- Je ne sais pas / flashcards / répétition espacée ---------- */
+.dk-btn {
+  width: 100%; margin-top: 10px; min-height: 52px;
+  border: 2px dashed var(--line); border-radius: var(--radius-big);
+  background: transparent; color: var(--muted);
+  font-size: 16px; font-weight: 600;
+}
+.verdict.dk { color: var(--ink); font-size: 17px; }
+
+.seg.seg-3 { grid-template-columns: repeat(3, 1fr); }
+.seg.seg-3 button { font-size: 14px; padding: 0 4px; line-height: 1.2; }
+
+.stats.stats-4 { grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.stats-4 .stat { padding: 12px 8px; }
+.stats-4 .stat b { font-size: 22px; }
+.stats-4 .stat span { font-size: 12px; }
+
+.btn-good { background: var(--good); color: #fff; }
+@media (prefers-color-scheme: dark) { .btn-good { color: #0E1320; } }
+
+.flashcard {
+  width: 100%; border: 0; text-align: left; margin-top: 8px;
+  min-height: 300px; padding: 24px 22px;
+  background: var(--sheet); border-radius: 26px;
+  display: flex; flex-direction: column; gap: 12px;
+  box-shadow: 0 1px 0 var(--line), 0 10px 24px rgba(0, 0, 0, .06);
+  color: var(--text);
+}
+.flashcard:disabled { cursor: default; opacity: 1; }
+.fc-label { font-size: 13px; font-weight: 700; color: var(--muted); }
+.fc-q {
+  font-family: var(--display); font-size: 24px; line-height: 1.25; font-weight: 700;
+  white-space: pre-line; overflow-wrap: anywhere;
+}
+.fc-hint { margin-top: auto; color: var(--muted); font-size: 15px; text-align: center; }
+.fc-answer {
+  margin-top: auto; padding-top: 16px; border-top: 2px dashed var(--line);
+  display: flex; flex-direction: column; gap: 6px;
+  animation: fc-reveal .25s ease-out;
+}
+.fc-a { font-family: var(--display); font-size: 22px; font-weight: 800; color: var(--good); overflow-wrap: anywhere; }
+@keyframes fc-reveal { from { opacity: 0; transform: translateY(6px); } }
+
 /* ---------- Claude (IA) ---------- */
 .ask-row { margin-top: 14px; }
 .ask-btn {

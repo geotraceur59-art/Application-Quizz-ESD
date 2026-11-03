@@ -172,8 +172,10 @@ Question : ${q.q}
 Réponses proposées :
 ${letters}
 Bonne réponse : ${q.choices[q.answer]}
-Réponse de l'étudiant : ${q.choices[item.picked]} (${item.ok ? 'juste' : 'fausse'})${q.explain ? '\nExplication du cours : ' + q.explain : ''}`,
-    suggestions: item.ok
+${item.picked === null ? "L'étudiant révise en flashcard (il a vu la bonne réponse)." : item.picked === 'dk' ? "L'étudiant a répondu « Je ne sais pas »." : `Réponse de l'étudiant : ${q.choices[item.picked]} (${item.ok ? 'juste' : 'fausse'})`}${q.explain ? '\nExplication du cours : ' + q.explain : ''}`,
+    suggestions: item.picked === null || item.picked === 'dk'
+      ? ['Explique-moi cette réponse', 'Donne-moi un moyen de retenir', 'Donne-moi un exemple concret']
+      : item.ok
       ? ['Explique-moi plus en détail', 'Donne-moi un exemple concret', 'Pourquoi les autres réponses sont fausses ?']
       : ['Pourquoi ma réponse est fausse ?', 'Explique plus simplement', 'Donne-moi un moyen de retenir'],
   };
@@ -429,7 +431,7 @@ async function syncNow() {
       done = true;
       const imagesChanged = await syncImages();
       setSyncState('ok');
-      if ((localChanged || imagesChanged) && ['home', 'themes', 'subject', 'settings', 'diagrams', 'editDiagrams', 'diagram'].includes(state.screen)) {
+      if ((localChanged || imagesChanged) && ['home', 'themes', 'subject', 'mix', 'settings', 'diagrams', 'editDiagrams', 'diagram'].includes(state.screen)) {
         if (state.screen === 'subject' && !getQuiz(state.id)) go('themes');
         else if (state.screen === 'diagram' && !getDiagram(state.id)) go(state.edit ? 'editDiagrams' : 'diagrams');
         else if (!(state.screen === 'diagram' && state.edit)) { const y = window.scrollY; render(); window.scrollTo(0, y); }
@@ -713,12 +715,83 @@ function bestScore(quiz) {
   if (!full.length) return null;
   return Math.max(...full.map(h => pct(h.score, h.total)));
 }
-function recordAnswer(quiz, qid, ok) {
-  const s = quiz.stats[qid] || (quiz.stats[qid] = { right: 0, wrong: 0, last: null });
-  if (ok) s.right++; else s.wrong++;
-  s.last = ok ? 'ok' : 'ko';
+/* ---------- Répétition espacée (principe d'Anki) ----------
+   Chaque question a un niveau (0 à 6) et une date de prochaine révision.
+   Bonne réponse : le niveau monte et l'intervalle s'allonge (1, 3, 7, 16, 35, 75 jours).
+   Erreur ou « Je ne sais pas » : retour au niveau 0, à revoir aujourd'hui. */
+const SRS_DAYS = [0, 1, 3, 7, 16, 35, 75];
+const DAY = 24 * 3600 * 1000;
+function startOfDay(t = Date.now()) { const d = new Date(t); d.setHours(0, 0, 0, 0); return d.getTime(); }
+function endOfToday() { return startOfDay() + DAY - 1; }
+function statOf(quiz, qid) {
+  return quiz.stats[qid] || (quiz.stats[qid] = { right: 0, wrong: 0, last: null });
+}
+function srsUpdate(st, good) {
+  if (good) {
+    st.lvl = Math.min((st.lvl || 0) + 1, SRS_DAYS.length - 1);
+    st.due = startOfDay() + SRS_DAYS[st.lvl] * DAY;
+  } else {
+    st.lvl = 0;
+    st.due = Date.now();
+  }
+}
+function isNew(st) { return !st || (!st.last && st.due == null); }
+function isDue(st) { return !isNew(st) && (st.due == null || st.due <= endOfToday()); }
+function isMastered(st) { return !!st && (st.lvl || 0) >= 3; }
+function dueCount(quiz) { return quiz.questions.filter(q => isDue(quiz.stats[q.id])).length; }
+function masteredCount(quiz) { return quiz.questions.filter(q => isMastered(quiz.stats[q.id])).length; }
+
+// result : 'ok' (bonne réponse), 'ko' (erreur) ou 'dk' (je ne sais pas)
+function recordAnswer(quiz, qid, result) {
+  const st = statOf(quiz, qid);
+  if (result === 'ok') st.right++;
+  else if (result === 'dk') st.dk = (st.dk || 0) + 1;
+  else st.wrong++;
+  st.last = result === 'ok' ? 'ok' : 'ko';
+  srsUpdate(st, result === 'ok');
   quiz.updatedAt = Date.now();
   saveDb();
+}
+// Flashcards : seule la répétition espacée est mise à jour
+function recordCard(quiz, qid, known) {
+  const st = statOf(quiz, qid);
+  srsUpdate(st, known);
+  quiz.updatedAt = Date.now();
+  saveDb();
+}
+
+// Tirage des questions : 'smart' (priorité du jour), 'errors' ou 'random'
+function pickPairs(quizzes, pool, n) {
+  const all = quizzes.flatMap(quiz => quiz.questions.map(q => ({ quizId: quiz.id, qid: q.id, st: quiz.stats[q.id] })));
+  let list;
+  if (pool === 'errors') list = shuffle(all.filter(p => p.st && p.st.last === 'ko'));
+  else if (pool === 'random') list = shuffle(all);
+  else {
+    const dueKo = [], due = [], fresh = [], later = [];
+    all.forEach(p => {
+      if (isNew(p.st)) fresh.push(p);
+      else if (isDue(p.st)) (p.st.last === 'ko' ? dueKo : due).push(p);
+      else later.push(p);
+    });
+    later.sort((a, b) => (a.st.due || 0) - (b.st.due || 0));
+    list = [...shuffle(dueKo), ...shuffle(due), ...shuffle(fresh), ...later];
+  }
+  return shuffle(list.slice(0, n || list.length)).map(p => ({ quizId: p.quizId, qid: p.qid }));
+}
+
+/* ---------- Préférences : format (quiz / flashcards) et tirage ---------- */
+const PREF_KEY = 'revisions.prefs';
+let prefs = (() => { try { return { format: 'quiz', pool: 'smart', ...JSON.parse(localStorage.getItem(PREF_KEY)) }; } catch (e) { return { format: 'quiz', pool: 'smart' }; } })();
+function savePrefs() { try { localStorage.setItem(PREF_KEY, JSON.stringify(prefs)); } catch (e) { /* rien */ } }
+function segHtml(action, current, options) {
+  return `<div class="seg seg-${options.length}" role="group">${options.map(([v, label]) =>
+    `<button class="${current === v ? 'on' : ''}" data-action="${action}" data-v="${v}" aria-pressed="${current === v}">${label}</button>`).join('')}</div>`;
+}
+function formatPicker() {
+  return `<div class="section"><h2>Format</h2>${segHtml('set-format', prefs.format, [['quiz', 'Quiz'], ['cards', 'Flashcards']])}
+    <p class="muted small" style="margin-top:8px">${prefs.format === 'cards'
+      ? 'Tu vois la question, tu retournes la carte, puis tu dis si tu savais. Idéal pour mémoriser avant de te tester.'
+      : 'Quatre réponses, une seule bonne. Touche « Je ne sais pas » plutôt que de répondre au hasard.'}</p></div>`;
 }
 
 /* =========================================================
@@ -780,20 +853,21 @@ const VIEWS = {
 
     const totalQ = list.reduce((n, q) => n + q.questions.length, 0);
     const totalRev = list.reduce((n, q) => n + toReview(q).length, 0);
+    const totalDue = list.reduce((n, q) => n + dueCount(q), 0);
     return head + `
       <div class="menu">
         <button class="menu-item" data-action="mix">
           <span class="menu-icon" aria-hidden="true">${ICONS.shuffle}</span>
           <span class="menu-text">
             <span class="menu-title">Commencer un quiz</span>
-            <span class="menu-sub">Questions mélangées de tous tes thèmes, tu choisis combien</span>
+            <span class="menu-sub">${totalDue ? `<strong>${plural(totalDue, 'question à revoir', 'questions à revoir')} aujourd'hui</strong>` : 'Questions de tous tes thèmes, tu choisis combien'}</span>
           </span>
         </button>
         <button class="menu-item" data-action="themes">
           <span class="menu-icon" aria-hidden="true">${ICONS.list}</span>
           <span class="menu-text">
             <span class="menu-title">Commencer un thème</span>
-            <span class="menu-sub">${plural(list.length, 'thème', 'thèmes')}, ${plural(totalQ, 'question', 'questions')}${totalRev ? `, <span class="badge-err">${totalRev} à revoir</span>` : ''}</span>
+            <span class="menu-sub">${plural(list.length, 'thème', 'thèmes')}, ${plural(totalQ, 'question', 'questions')}${totalRev ? `, <span class="badge-err">${plural(totalRev, 'erreur', 'erreurs')}</span>` : ''}</span>
           </span>
         </button>
         ${diagramsItem}
@@ -815,7 +889,7 @@ const VIEWS = {
           const best = bestScore(q);
           return `<li><button class="subject" data-action="open" data-id="${q.id}">
             <h3>${esc(q.title)}</h3>
-            <span class="meta">${plural(q.questions.length, 'question', 'questions')}${rev ? `, <span class="badge-err">${rev} à revoir</span>` : ''}</span>
+            <span class="meta">${plural(q.questions.length, 'question', 'questions')}${dueCount(q) ? `, ${dueCount(q)} aujourd'hui` : ''}${rev ? `, <span class="badge-err">${plural(rev, 'erreur', 'erreurs')}</span>` : ''}</span>
             <span class="score">${best === null ? '–' : best + ' %'}<small>${best === null ? 'pas encore fait' : 'meilleur'}</small></span>
           </button></li>`;
         }).join('')}
@@ -826,7 +900,12 @@ const VIEWS = {
   mix() {
     const list = db.quizzes.slice().sort((a, b) => a.title.localeCompare(b.title, 'fr'));
     const sel = state.sel;
-    const total = list.filter(q => sel.has(q.id)).reduce((n, q) => n + q.questions.length, 0);
+    const chosen = list.filter(q => sel.has(q.id));
+    const nAll = chosen.reduce((n, q) => n + q.questions.length, 0);
+    const nErr = chosen.reduce((n, q) => n + toReview(q).length, 0);
+    const nDue = chosen.reduce((n, q) => n + dueCount(q), 0);
+    const pool = prefs.pool;
+    const total = pool === 'errors' ? nErr : nAll;
     const allOn = list.every(q => sel.has(q.id));
     const someOn = !allOn && list.some(q => sel.has(q.id));
     return `
@@ -834,7 +913,18 @@ const VIEWS = {
         <button class="icon-btn" data-action="home" aria-label="Retour à l'accueil">${ICONS.back}</button>
       </div>
       <h1>Commencer un quiz</h1>
-      <p class="muted" style="margin-top:8px">Les questions sont tirées au hasard dans les thèmes cochés.</p>
+
+      ${formatPicker()}
+
+      <div class="section">
+        <h2>Questions</h2>
+        ${segHtml('set-pool', pool, [['smart', 'Priorité du jour'], ['errors', 'Mes erreurs'], ['random', 'Au hasard']])}
+        <p class="muted small" style="margin-top:8px">${pool === 'errors'
+          ? `Uniquement ce que tu as raté ou pas su : ${plural(nErr, 'question', 'questions')}.`
+          : pool === 'random'
+            ? 'Tirage au hasard, sans tenir compte de ton suivi.'
+            : `D'abord les questions à revoir aujourd'hui (${nDue}), puis les nouvelles, puis les autres. Les questions ratées reviennent plus souvent.`}</p>
+      </div>
 
       ${total ? countPicker(total) : ''}
 
@@ -857,7 +947,7 @@ const VIEWS = {
 
       ${dock(total
         ? `<button class="btn btn-primary" id="start-btn" data-action="start-mix">${startLabel()}</button>`
-        : `<button class="btn btn-primary" disabled>Coche au moins un thème</button>`)}`;
+        : `<button class="btn btn-primary" disabled>${!chosen.length ? 'Coche au moins un thème' : 'Aucune erreur à revoir dans ces thèmes'}</button>`)}`;
   },
 
   /* ----- Import ----- */
@@ -892,6 +982,7 @@ const VIEWS = {
     const rev = toReview(quiz);
     const best = bestScore(quiz);
     const total = quiz.questions.length;
+    const due = dueCount(quiz);
     const hist = quiz.history.slice(-8).reverse();
     const missed = quiz.questions
       .filter(q => quiz.stats[q.id] && quiz.stats[q.id].wrong > 0)
@@ -904,13 +995,18 @@ const VIEWS = {
       </div>
       <h1>${esc(quiz.title)}</h1>
 
-      <div class="stats">
+      <div class="stats stats-4">
         <div class="stat"><b>${total}</b><span>questions</span></div>
-        <div class="stat"><b>${best === null ? '–' : best + '%'}</b><span>meilleur score</span></div>
-        <div class="stat ${rev.length ? 'err' : ''}"><b>${rev.length}</b><span>à revoir</span></div>
+        <div class="stat"><b>${masteredCount(quiz)}</b><span>maîtrisées</span></div>
+        <div class="stat"><b>${due}</b><span>aujourd'hui</span></div>
+        <div class="stat ${rev.length ? 'err' : ''}"><b>${rev.length}</b><span>erreurs</span></div>
       </div>
+      ${best !== null ? `<p class="muted small" style="margin-top:8px">Meilleur score en quiz complet : ${best} %</p>` : ''}
+
+      ${formatPicker()}
 
       ${countPicker(total)}
+      <p class="muted small" style="margin-top:8px">Les questions à revoir aujourd'hui passent en premier, puis les nouvelles.</p>
 
       ${missed.length ? `
       <div class="section">
@@ -928,7 +1024,7 @@ const VIEWS = {
       <div class="section">
         <h2>Historique</h2>
         <ul class="history">
-          ${hist.map(h => `<li><span>${fmtDate(h.date)}${h.mode === 'mix' ? ' <span class="muted">(quiz mélangé)</span>' : h.mode !== 'all' ? ' <span class="muted">(erreurs)</span>' : ''}</span><span class="s">${h.score}/${h.total}</span></li>`).join('')}
+          ${hist.map(h => `<li><span>${fmtDate(h.date)}${h.mode === 'mix' ? ' <span class="muted">(quiz mélangé)</span>' : h.mode !== 'all' ? ' <span class="muted">(erreurs)</span>' : ''}${h.dk ? ` <span class="muted">· ${h.dk} je ne sais pas</span>` : ''}</span><span class="s">${h.score}/${h.total}</span></li>`).join('')}
         </ul>
       </div>` : ''}
 
@@ -940,13 +1036,14 @@ const VIEWS = {
 
       ${dock(`
         <button class="btn btn-primary" id="start-btn" data-action="start" data-mode="all">${startLabel()}</button>
-        ${rev.length ? `<button class="btn btn-secondary" data-action="start" data-mode="errors">Revoir mes ${plural(rev.length, 'erreur', 'erreurs')}</button>` : ''}
+        ${rev.length ? `<button class="btn btn-secondary" data-action="start" data-mode="errors">Revoir mes ${plural(rev.length, 'erreur', 'erreurs')}${prefs.format === 'cards' ? ' en flashcards' : ''}</button>` : ''}
       `)}`;
   },
 
   /* ----- Quiz en cours ----- */
   play() {
     const s = state.session;
+    if (s.format === 'cards') return VIEWS.cards();
     const item = s.items[s.idx];
     const quiz = getQuiz(item.quizId);
     const q = findQ(item);
@@ -981,10 +1078,83 @@ const VIEWS = {
       ${s.origin.type === 'mix' ? `<p class="q-theme">${esc(quiz.title)}</p>` : ''}
       <p class="question">${esc(q.q)}</p>
       <div class="choices ${done ? 'answered' : ''}">${choices}</div>
+      ${!done ? `<button class="dk-btn" data-action="dont-know">Je ne sais pas</button>` : ''}
       ${done && item.ok ? `<p class="verdict good">Bonne réponse</p>` : ''}
+      ${done && item.picked === 'dk' ? `<p class="verdict dk">Pas de souci : retiens la réponse en vert, elle reviendra bientôt.</p>` : ''}
       ${done && q.explain ? `<p class="explain">${esc(q.explain)}</p>` : ''}
       ${done && ai ? `<div class="ask-row"><button class="ask-btn" data-action="ask-q">${ICONS.spark}Demander à Claude</button></div>` : ''}
       ${done ? dock(`<button class="btn btn-primary" data-action="next">${last ? 'Voir mon score' : 'Question suivante'}</button>`) : ''}`;
+  },
+
+  /* ----- Flashcards ----- */
+  cards() {
+    const s = state.session;
+    const item = s.items[s.idx];
+    const quiz = getQuiz(item.quizId);
+    const q = findQ(item);
+    if (!q) {
+      s.items.splice(s.idx, 1);
+      if (!s.items.length) return VIEWS.home();
+      s.idx = Math.min(s.idx, s.items.length - 1);
+      return VIEWS.cards();
+    }
+    const n = s.items.length;
+    const flipped = item.flipped;
+    return `
+      <div class="topbar">
+        <button class="icon-btn" data-action="quit" aria-label="Arrêter">${ICONS.close}</button>
+        <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="${n}" aria-valuenow="${s.idx}"><span style="width:${(s.idx / n) * 100}%"></span></div>
+        <span class="q-count">${s.idx + 1} / ${n}</span>
+      </div>
+      ${s.origin.type === 'mix' ? `<p class="q-theme">${esc(quiz.title)}</p>` : ''}
+      <button class="flashcard ${flipped ? 'flipped' : ''}" data-action="flip" ${flipped ? 'disabled' : ''} aria-label="${flipped ? 'Carte retournée' : 'Retourner la carte'}">
+        <span class="fc-label">Question</span>
+        <span class="fc-q">${esc(q.q)}</span>
+        ${flipped
+          ? `<span class="fc-answer"><span class="fc-label">Réponse</span><span class="fc-a">${esc(q.choices[q.answer])}</span></span>`
+          : '<span class="fc-hint">Réfléchis à la réponse, puis touche la carte</span>'}
+      </button>
+      ${flipped && q.explain ? `<p class="explain">${esc(q.explain)}</p>` : ''}
+      ${flipped && ai ? `<div class="ask-row"><button class="ask-btn" data-action="ask-q">${ICONS.spark}Demander à Claude</button></div>` : ''}
+      ${dock(flipped
+        ? `<div class="row">
+             <button class="btn btn-danger" data-action="card-rate" data-k="0">Je ne savais pas</button>
+             <button class="btn btn-good" data-action="card-rate" data-k="1">Je savais</button>
+           </div>`
+        : `<button class="btn btn-primary" data-action="flip">Voir la réponse</button>`)}`;
+  },
+
+  cardsResult() {
+    const s = state.session;
+    const n = s.items.length;
+    const known = s.items.filter(i => i.known).length;
+    const toWork = s.items.filter(i => !i.known && findQ(i));
+    const back = s.origin.type === 'mix'
+      ? `data-action="home">Retour à l'accueil`
+      : `data-action="open" data-id="${s.origin.id}">Retour au thème`;
+    return `
+      <div class="result-hero">
+        <div class="big">${known}<small>/${n}</small></div>
+        <p><strong>${plural(known, 'carte sue', 'cartes sues')}</strong></p>
+        <p class="muted small">${toWork.length ? 'Les cartes non sues reviendront dès aujourd\'hui.' : 'Tout est su. Passe au quiz pour te tester !'}</p>
+      </div>
+      ${toWork.length ? `
+      <div class="section">
+        <h2>À retravailler</h2>
+        ${toWork.map(i => {
+          const q = findQ(i);
+          return `<div class="mistake">
+            ${s.origin.type === 'mix' ? `<span class="q-theme small">${esc(getQuiz(i.quizId).title)}</span>` : ''}
+            <p class="q">${esc(q.q)}</p>
+            <p class="a right"><span class="dot"></span><span>${esc(q.choices[q.answer])}</span></p>
+            ${q.explain ? `<p class="explain small">${esc(q.explain)}</p>` : ''}
+          </div>`;
+        }).join('')}
+      </div>` : ''}
+      ${dock(`
+        ${toWork.length ? `<button class="btn btn-primary" data-action="retry">Revoir ces ${plural(toWork.length, 'carte', 'cartes')}</button>` : ''}
+        <button class="btn ${toWork.length ? 'btn-secondary' : 'btn-primary'}" data-action="test-these">Me tester en quiz sur ces questions</button>
+        <button class="btn btn-secondary" ${back}</button>`)}`;
   },
 
   /* ----- Résultats ----- */
@@ -994,6 +1164,7 @@ const VIEWS = {
     const n = s.items.length;
     const p = pct(score, n);
     const mistakes = s.items.filter(i => !i.ok && findQ(i));
+    const nDk = s.items.filter(i => i.picked === 'dk').length;
     const msg = p === 100 ? 'Sans faute !' : p >= 80 ? 'Très bien, presque parfait.' : p >= 50 ? 'Bonne base, continue.' : 'Encore un peu de travail.';
     const back = s.origin.type === 'mix'
       ? `data-action="home">Retour à l'accueil`
@@ -1003,18 +1174,19 @@ const VIEWS = {
       <div class="result-hero">
         <div class="big">${score}<small>/${n}</small></div>
         <p><strong>${p} %</strong> de bonnes réponses</p>
+        ${nDk ? `<p class="muted small">dont ${plural(nDk, '« Je ne sais pas »', '« Je ne sais pas »')} : ${nDk > 1 ? 'elles reviendront' : 'elle reviendra'} vite</p>` : ''}
         <p class="muted small">${msg}</p>
       </div>
 
       ${mistakes.length ? `
       <div class="section">
-        <h2>Tes erreurs</h2>
+        <h2>À revoir</h2>
         ${mistakes.map(i => {
           const q = findQ(i);
           return `<div class="mistake">
             ${s.origin.type === 'mix' ? `<span class="q-theme small">${esc(getQuiz(i.quizId).title)}</span>` : ''}
             <p class="q">${esc(q.q)}</p>
-            <p class="a yours"><span class="dot"></span><span>${esc(q.choices[i.picked])}</span></p>
+            <p class="a yours"><span class="dot"></span><span>${i.picked === 'dk' ? '<em>Je ne sais pas</em>' : esc(q.choices[i.picked])}</span></p>
             <p class="a right"><span class="dot"></span><span>${esc(q.choices[q.answer])}</span></p>
             ${q.explain ? `<p class="explain small">${esc(q.explain)}</p>` : ''}
           </div>`;
@@ -1374,7 +1546,9 @@ function gaugePct(n, total) {
   return total > 1 ? ((n - 1) / (total - 1)) * 100 : 100;
 }
 function startLabel() {
-  return 'Lancer ' + plural(state.count || 1, 'question', 'questions');
+  return 'Lancer ' + (prefs.format === 'cards'
+    ? plural(state.count || 1, 'flashcard', 'flashcards')
+    : plural(state.count || 1, 'question', 'questions'));
 }
 function setCount(n, rerender) {
   state.count = clampCount(n, state.total);
@@ -1441,9 +1615,9 @@ function updateImportReport() {
    Actions
    ========================================================= */
 // items : [{ quizId, qid }] ; origin : { type: 'theme', id } ou { type: 'mix' }
-function startSession(pairs, mode, origin) {
-  const items = pairs.map(p => ({ quizId: p.quizId, qid: p.qid, order: shuffle([0, 1, 2, 3]), picked: null, ok: null }));
-  go('play', { session: { items, idx: 0, mode, origin } });
+function startSession(pairs, mode, origin, format = prefs.format) {
+  const items = pairs.map(p => ({ quizId: p.quizId, qid: p.qid, order: shuffle([0, 1, 2, 3]), picked: null, ok: null, flipped: false, known: null }));
+  go('play', { session: { items, idx: 0, mode, origin, format } });
 }
 
 const ACTIONS = {
@@ -1496,21 +1670,17 @@ const ACTIONS = {
   start: el => {
     const quiz = getQuiz(state.id);
     let pairs;
-    if (el.dataset.mode === 'errors') {
-      pairs = shuffle(toReview(quiz).map(q => ({ quizId: quiz.id, qid: q.id })));
-    } else {
-      pairs = shuffle(quiz.questions.map(q => ({ quizId: quiz.id, qid: q.id }))).slice(0, state.count || quiz.questions.length);
-    }
+    if (el.dataset.mode === 'errors') pairs = pickPairs([quiz], 'errors');
+    else pairs = pickPairs([quiz], 'smart', state.count || quiz.questions.length);
     if (!pairs.length) return;
     startSession(pairs, el.dataset.mode, { type: 'theme', id: quiz.id });
   },
 
   'start-mix': () => {
-    const all = db.quizzes.filter(q => state.sel.has(q.id))
-      .flatMap(quiz => quiz.questions.map(q => ({ quizId: quiz.id, qid: q.id })));
-    const pairs = shuffle(all).slice(0, state.count || all.length);
+    const quizzes = db.quizzes.filter(q => state.sel.has(q.id));
+    const pairs = pickPairs(quizzes, prefs.pool, state.count);
     if (!pairs.length) return;
-    startSession(pairs, 'mix', { type: 'mix' });
+    startSession(pairs, prefs.pool === 'errors' ? 'mix-errors' : 'mix', { type: 'mix' });
   },
 
   pick: el => {
@@ -1521,9 +1691,41 @@ const ACTIONS = {
     if (!q) return;
     item.picked = Number(el.dataset.c);
     item.ok = item.picked === q.answer;
-    recordAnswer(getQuiz(item.quizId), q.id, item.ok);
+    recordAnswer(getQuiz(item.quizId), q.id, item.ok ? 'ok' : 'ko');
     render();
   },
+  'dont-know': () => {
+    const s = state.session;
+    const item = s.items[s.idx];
+    if (item.picked !== null) return;
+    const q = findQ(item);
+    if (!q) return;
+    item.picked = 'dk';
+    item.ok = false;
+    recordAnswer(getQuiz(item.quizId), q.id, 'dk');
+    render();
+  },
+  flip: () => {
+    const s = state.session;
+    s.items[s.idx].flipped = true;
+    render();
+  },
+  'card-rate': el => {
+    const s = state.session;
+    const item = s.items[s.idx];
+    if (!item.flipped || item.known !== null) return;
+    item.known = el.dataset.k === '1';
+    if (findQ(item)) recordCard(getQuiz(item.quizId), item.qid, item.known);
+    if (s.idx < s.items.length - 1) { s.idx++; render(); window.scrollTo(0, 0); }
+    else go('cardsResult', { session: s });
+  },
+  'test-these': () => {
+    const s = state.session;
+    const pairs = shuffle(s.items.filter(i => findQ(i)).map(i => ({ quizId: i.quizId, qid: i.qid })));
+    startSession(pairs, s.origin.type === 'mix' ? 'mix' : 'retry', s.origin, 'quiz');
+  },
+  'set-format': el => { prefs.format = el.dataset.v; savePrefs(); rerenderKeepScroll(); },
+  'set-pool': el => { prefs.pool = el.dataset.v; savePrefs(); rerenderKeepScroll(); },
 
   next: () => {
     const s = state.session;
@@ -1539,10 +1741,11 @@ const ACTIONS = {
         g.total++; if (i.ok) g.score++;
         byQuiz.set(i.quizId, g);
       });
+      s.items.forEach(i => { if (i.picked === 'dk') byQuiz.get(i.quizId).dk = (byQuiz.get(i.quizId).dk || 0) + 1; });
       byQuiz.forEach((g, quizId) => {
         const quiz = getQuiz(quizId);
         if (!quiz) return;
-        quiz.history.push({ date: Date.now(), score: g.score, total: g.total, mode: s.mode });
+        quiz.history.push({ date: Date.now(), score: g.score, total: g.total, mode: s.mode, ...(g.dk ? { dk: g.dk } : {}) });
         if (quiz.history.length > 100) quiz.history = quiz.history.slice(-100);
         quiz.updatedAt = Date.now();
       });
@@ -1560,8 +1763,9 @@ const ACTIONS = {
 
   retry: () => {
     const s = state.session;
-    const pairs = shuffle(s.items.filter(i => !i.ok && findQ(i)).map(i => ({ quizId: i.quizId, qid: i.qid })));
-    startSession(pairs, s.origin.type === 'mix' ? 'mix' : 'retry', s.origin);
+    const failed = s.format === 'cards' ? (i => !i.known) : (i => !i.ok);
+    const pairs = shuffle(s.items.filter(i => failed(i) && findQ(i)).map(i => ({ quizId: i.quizId, qid: i.qid })));
+    startSession(pairs, s.origin.type === 'mix' ? 'mix' : 'retry', s.origin, s.format);
   },
 
   'reset-stats': el => {
@@ -1662,7 +1866,7 @@ const ACTIONS = {
   'ask-q': () => {
     const s = state.session;
     const item = s.items[s.idx];
-    if (item.picked === null || !findQ(item)) return;
+    if ((item.picked === null && !item.flipped) || !findQ(item)) return;
     openAsk(questionContext(item));
   },
   'ask-diagram': () => {
