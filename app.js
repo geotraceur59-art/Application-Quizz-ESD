@@ -39,6 +39,262 @@ function getQuiz(id) { return db.quizzes.find(q => q.id === id); }
 function getDiagram(id) { return db.diagrams.find(d => d.id === id); }
 
 /* =========================================================
+   Claude (IA) : questions sur un sujet, depuis l'app
+   Appel direct à l'API Claude avec la clé de l'utilisateur,
+   enregistrée seulement sur cet appareil.
+   ========================================================= */
+const AI_KEY = 'revisions.ai';
+const AI_MODEL = 'claude-haiku-5-5';
+const AI_PRICE = { input: 0.10 / 1e6, output: 0.50 / 1e6 }; // $ par token (Haiku 5.5)
+let ai = loadAi();
+
+function loadAi() {
+  try {
+    const a = JSON.parse(localStorage.getItem(AI_KEY));
+    if (a && a.key) return { limit: 5, month: '', spent: 0, ...a };
+  } catch (e) { /* rien */ }
+  return null;
+}
+function saveAi() { try { localStorage.setItem(AI_KEY, JSON.stringify(ai)); } catch (e) { /* rien */ } }
+function thisMonth() { return new Date().toISOString().slice(0, 7); }
+function aiSpent() {
+  if (!ai) return 0;
+  if (ai.month !== thisMonth()) { ai.month = thisMonth(); ai.spent = 0; saveAi(); }
+  return ai.spent;
+}
+function money(n) {
+  if (n > 0 && n < 0.01) return 'moins de 0,01 $';
+  return n.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' $';
+}
+
+function aiSettingsHtml() {
+  if (!ai) return `
+    <p class="muted">Pose des questions à Claude sur un sujet directement depuis un quiz ou un schéma. Il faut une clé de l'API Claude (Console Claude, facturée à part de l'abonnement).</p>
+    <div class="field" style="margin-top:14px">
+      <label for="ai-key">Clé API (commence par sk-ant-)</label>
+      <input id="ai-key" type="password" placeholder="sk-ant-…" autocomplete="off" autocapitalize="off" spellcheck="false">
+    </div>
+    <div class="field">
+      <label for="ai-limit">Dépense maximum par mois, en dollars</label>
+      <input id="ai-limit" type="number" inputmode="decimal" min="0.5" step="0.5" value="5">
+    </div>
+    <button class="btn btn-secondary" data-action="ai-connect">Activer Claude</button>
+    <p class="muted small" style="margin-top:10px">La clé reste sur cet appareil : elle n'est ni synchronisée ni publiée sur GitHub.</p>`;
+  const spent = aiSpent();
+  const pct = Math.min(100, (spent / ai.limit) * 100);
+  return `
+    <p>Activé avec Claude Haiku. Le bouton « Demander à Claude » apparaît après chaque réponse et sur tes schémas.</p>
+    <div class="budget">
+      <div class="budget-bar"><span style="width:${pct}%"></span></div>
+      <p class="small"><strong>${money(spent)}</strong> <span class="muted">dépensés ce mois sur ${money(ai.limit)} (estimation)</span></p>
+    </div>
+    <div class="field" style="margin-top:14px">
+      <label for="ai-limit">Dépense maximum par mois, en dollars</label>
+      <input id="ai-limit" type="number" inputmode="decimal" min="0.5" step="0.5" value="${ai.limit}">
+    </div>
+    <div class="text-actions" style="margin-top:4px"><button class="link-btn danger" data-action="ai-disconnect">Retirer la clé de cet appareil</button></div>`;
+}
+
+function aiError(status, body) {
+  const msg = (body && body.error && body.error.message) || '';
+  if (status === 401) return 'Clé API refusée. Vérifie-la dans Réglages → Claude (IA).';
+  if (status === 403) return "Cette clé n'a pas accès à l'API.";
+  if (status === 400 && /credit|balance/i.test(msg)) return "Plus de crédit sur ton compte Console Claude. Ajoute du crédit sur platform.claude.com.";
+  if (status === 429) return 'Trop de demandes en peu de temps. Réessaie dans une minute.';
+  if (status === 529 || status >= 500) return 'Claude est surchargé pour le moment. Réessaie dans un instant.';
+  return `Claude a répondu une erreur (${status}).`;
+}
+
+async function callClaude(system, messages, key = ai.key) {
+  let res;
+  try {
+    res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-api-key': key,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+      },
+      body: JSON.stringify({ model: AI_MODEL, max_tokens: 800, system, messages }),
+    });
+  } catch (e) {
+    throw new Error('Pas de connexion internet. Cette fonction a besoin du réseau.');
+  }
+  let body = null;
+  try { body = await res.json(); } catch (e) { /* rien */ }
+  if (!res.ok) throw new Error(aiError(res.status, body));
+  if (ai && body.usage) {
+    aiSpent();
+    ai.spent += body.usage.input_tokens * AI_PRICE.input + body.usage.output_tokens * AI_PRICE.output;
+    saveAi();
+  }
+  return (body.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
+}
+
+// Mise en forme légère des réponses (gras, listes, paragraphes)
+function formatAnswer(text) {
+  const inline = t => esc(t).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/`([^`]+)`/g, '<code>$1</code>');
+  const out = [];
+  let list = null;
+  text.split('\n').forEach(raw => {
+    const line = raw.trim();
+    const item = line.match(/^(?:[-*•]|\d+[.)])\s+(.*)$/);
+    if (item) { if (!list) { list = []; } list.push(`<li>${inline(item[1])}</li>`); return; }
+    if (list) { out.push(`<ul>${list.join('')}</ul>`); list = null; }
+    if (!line) return;
+    const h = line.match(/^#{1,4}\s+(.*)$/);
+    out.push(h ? `<p><strong>${inline(h[1])}</strong></p>` : `<p>${inline(line)}</p>`);
+  });
+  if (list) out.push(`<ul>${list.join('')}</ul>`);
+  return out.join('');
+}
+
+const AI_SYSTEM = `Tu es un professeur particulier qui aide un étudiant à réviser ses cours (informatique, réseaux, systèmes, sécurité et autres sujets).
+Réponds en français, de façon claire et concrète, en 150 mots maximum sauf si l'étudiant demande plus de détails.
+Va droit au but : explique le « pourquoi », donne un exemple simple si ça aide, et signale franchement si la question ou la réponse du quiz te semble fausse ou ambiguë.
+Utilise au besoin des listes courtes et du **gras** pour les mots clés. Pas de titres.`;
+
+// Conversations en cours (le temps de la session), par question ou par schéma
+const chats = new Map();
+let askCtx = null;
+let askBusy = false;
+
+function questionContext(item) {
+  const quiz = getQuiz(item.quizId);
+  const q = findQ(item);
+  const letters = item.order.map((ci, pos) => `${LETTERS[pos]}) ${q.choices[ci]}`).join('\n');
+  return {
+    key: 'q:' + item.quizId + ':' + q.id,
+    label: q.q,
+    system: AI_SYSTEM + `\n\nContexte : l'étudiant vient de répondre à cette question de QCM (thème « ${quiz.title} »).
+Question : ${q.q}
+Réponses proposées :
+${letters}
+Bonne réponse : ${q.choices[q.answer]}
+Réponse de l'étudiant : ${q.choices[item.picked]} (${item.ok ? 'juste' : 'fausse'})${q.explain ? '\nExplication du cours : ' + q.explain : ''}`,
+    suggestions: item.ok
+      ? ['Explique-moi plus en détail', 'Donne-moi un exemple concret', 'Pourquoi les autres réponses sont fausses ?']
+      : ['Pourquoi ma réponse est fausse ?', 'Explique plus simplement', 'Donne-moi un moyen de retenir'],
+  };
+}
+
+function openAsk(ctx) {
+  askCtx = ctx;
+  if (!chats.has(ctx.key)) chats.set(ctx.key, []);
+  $ask.hidden = false;
+  document.body.classList.add('sheet-open');
+  renderAsk();
+  setTimeout(() => $ask.querySelector('textarea')?.focus({ preventScroll: true }), 50);
+}
+function closeAsk() {
+  $ask.hidden = true;
+  document.body.classList.remove('sheet-open');
+  askCtx = null;
+}
+
+function renderAsk() {
+  if (!askCtx) return;
+  const msgs = chats.get(askCtx.key);
+  const spent = aiSpent();
+  const over = spent >= ai.limit;
+  $ask.querySelector('.sheet-ctx').textContent = askCtx.label;
+  $ask.querySelector('.chat').innerHTML = msgs.map(m => m.role === 'user'
+    ? `<div class="msg me">${esc(m.display || m.text)}</div>`
+    : m.error ? `<div class="msg err">${esc(m.text)}</div>`
+    : `<div class="msg bot">${formatAnswer(m.text)}</div>`).join('')
+    + (askBusy ? '<div class="msg bot typing" aria-label="Claude écrit"><span></span><span></span><span></span></div>' : '');
+  $ask.querySelector('.suggest').innerHTML = msgs.length || over ? '' :
+    askCtx.suggestions.map(t => `<button class="chip" data-ask="${esc(t)}">${esc(t)}</button>`).join('');
+  $ask.querySelector('.sheet-foot').innerHTML = over
+    ? `<span class="sync-err">Limite de ${money(ai.limit)} atteinte ce mois-ci. Tu peux la modifier dans Réglages.</span>`
+    : `Claude Haiku · ${money(spent)} dépensés ce mois sur ${money(ai.limit)}`;
+  const ta = $ask.querySelector('textarea');
+  const send = $ask.querySelector('.send');
+  ta.disabled = over;
+  send.disabled = over || askBusy;
+  const chat = $ask.querySelector('.chat');
+  chat.scrollTop = chat.scrollHeight;
+}
+
+async function sendAsk(text) {
+  text = text.trim();
+  if (!text || askBusy || !askCtx) return;
+  if (aiSpent() >= ai.limit) { renderAsk(); return; }
+  const ctx = askCtx;
+  const msgs = chats.get(ctx.key);
+  msgs.push({ role: 'user', text });
+  askBusy = true;
+  renderAsk();
+  try {
+    const history = msgs.filter(m => !m.error).map(m => ({ role: m.role, content: m.text }));
+    if (ctx.image) {
+      const b64 = await ctx.image();
+      if (b64) history[0] = { role: 'user', content: [
+        { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: b64 } },
+        { type: 'text', text: history[0].content },
+      ] };
+    }
+    const answer = await callClaude(ctx.system, history);
+    msgs.push({ role: 'assistant', text: answer || "Je n'ai pas de réponse à donner." });
+  } catch (e) {
+    msgs.pop(); // on retire la question pour pouvoir la renvoyer
+    msgs.push({ role: 'assistant', text: e.message, error: true });
+    const ta = $ask.querySelector('textarea');
+    if (ta && !ta.value) ta.value = text;
+  } finally {
+    askBusy = false;
+    if (askCtx && askCtx.key === ctx.key) renderAsk();
+  }
+}
+
+// Panneau « Demander à Claude » (en dehors de #app pour ne pas être effacé par render)
+const $ask = document.createElement('div');
+$ask.id = 'ask';
+$ask.className = 'sheet';
+$ask.hidden = true;
+$ask.innerHTML = `
+  <div class="sheet-backdrop" data-close></div>
+  <section class="sheet-panel" role="dialog" aria-modal="true" aria-labelledby="ask-title">
+    <div class="sheet-head">
+      <h2 id="ask-title">${'Demander à Claude'}</h2>
+      <button class="icon-btn" data-close aria-label="Fermer"></button>
+    </div>
+    <p class="sheet-ctx"></p>
+    <div class="chat" aria-live="polite"></div>
+    <div class="suggest"></div>
+    <form class="ask-form">
+      <textarea rows="1" placeholder="Ta question sur ce sujet…" enterkeyhint="send"></textarea>
+      <button class="send" type="submit" aria-label="Envoyer">↑</button>
+    </form>
+    <p class="sheet-foot small muted"></p>
+  </section>`;
+document.body.appendChild($ask);
+
+$ask.addEventListener('click', e => {
+  if (e.target.closest('[data-close]')) { closeAsk(); return; }
+  const chip = e.target.closest('[data-ask]');
+  if (chip) sendAsk(chip.dataset.ask);
+});
+$ask.querySelector('.ask-form').addEventListener('submit', e => {
+  e.preventDefault();
+  const ta = $ask.querySelector('textarea');
+  const t = ta.value;
+  ta.value = '';
+  ta.style.height = '';
+  sendAsk(t);
+});
+$ask.querySelector('textarea').addEventListener('input', e => {
+  const ta = e.target;
+  ta.style.height = '';
+  ta.style.height = Math.min(ta.scrollHeight, 120) + 'px';
+});
+$ask.querySelector('textarea').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); $ask.querySelector('.ask-form').requestSubmit(); }
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$ask.hidden) closeAsk(); });
+
+/* =========================================================
    Synchronisation avec un dépôt GitHub privé
    Le dépôt contient un fichier donnees.json avec tous les quiz
    et le suivi. Chaque matière garde la version la plus récente
@@ -345,6 +601,7 @@ const ICONS = {
   list: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="5" cy="6" r="1.6"/><circle cx="5" cy="12" r="1.6"/><circle cx="5" cy="18" r="1.6"/><path d="M10 6h10M10 12h10M10 18h10"/></svg>',
   dash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 12h12"/></svg>',
   diagram: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><rect x="6" y="8" width="6" height="3" rx="1" fill="currentColor"/><rect x="12" y="14" width="6" height="3" rx="1" fill="currentColor"/></svg>',
+  spark: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2.5l1.9 5.6 5.6 1.9-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.9L12 2.5zM18.5 15l.9 2.6 2.6.9-2.6.9-.9 2.6-.9-2.6-2.6-.9 2.6-.9.9-2.6z"/></svg>',
   check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
   gear: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>',
 };
@@ -468,6 +725,7 @@ function recordAnswer(quiz, qid, ok) {
    Écrans
    ========================================================= */
 function go(screen, extra = {}) {
+  if (typeof closeAsk === 'function' && askCtx) closeAsk();
   const leavingQuiz = state.screen === 'play' && screen !== 'play';
   state = { screen, ...extra };
   render();
@@ -725,6 +983,7 @@ const VIEWS = {
       <div class="choices ${done ? 'answered' : ''}">${choices}</div>
       ${done && item.ok ? `<p class="verdict good">Bonne réponse</p>` : ''}
       ${done && q.explain ? `<p class="explain">${esc(q.explain)}</p>` : ''}
+      ${done && ai ? `<div class="ask-row"><button class="ask-btn" data-action="ask-q">${ICONS.spark}Demander à Claude</button></div>` : ''}
       ${done ? dock(`<button class="btn btn-primary" data-action="next">${last ? 'Voir mon score' : 'Question suivante'}</button>`) : ''}`;
   },
 
@@ -799,9 +1058,12 @@ const VIEWS = {
         ? "Fais défiler l'image zoomée, puis repasse sur « Dessiner des cases »."
         : 'Fais glisser ton doigt sur un texte pour le cacher. Touche une case pour la sélectionner.'}</p>`
       : `
-      <p class="muted" id="dg-count" style="margin:0 0 14px">${d.zones.length
-        ? `${open.size} / ${plural(d.zones.length, 'case révélée', 'cases révélées')}`
-        : 'Aucune case pour le moment. Dessine-les dans <strong>Réglages → Modifier mes schémas</strong>.'}</p>`;
+      <div class="dg-info">
+        <p class="muted" id="dg-count">${d.zones.length
+          ? `${open.size} / ${plural(d.zones.length, 'case révélée', 'cases révélées')}`
+          : 'Aucune case pour le moment. Dessine-les dans <strong>Réglages → Modifier mes schémas</strong>.'}</p>
+        ${ai ? `<button class="ask-btn" data-action="ask-diagram">${ICONS.spark}Demander à Claude</button>` : ''}
+      </div>`;
 
     return `
       <div class="topbar">
@@ -907,6 +1169,11 @@ const VIEWS = {
             </span>
           </button>
         </div>
+      </div>
+
+      <div class="section">
+        <h2>Claude (IA)</h2>
+        <div id="ai-settings">${aiSettingsHtml()}</div>
       </div>
 
       <div class="section">
@@ -1391,6 +1658,44 @@ const ACTIONS = {
     go('editDiagrams');
   },
 
+  /* ----- Claude (IA) ----- */
+  'ask-q': () => {
+    const s = state.session;
+    const item = s.items[s.idx];
+    if (item.picked === null || !findQ(item)) return;
+    openAsk(questionContext(item));
+  },
+  'ask-diagram': () => {
+    const d = getDiagram(state.id);
+    openAsk({
+      key: 'd:' + d.id,
+      label: 'Schéma : ' + d.title,
+      system: AI_SYSTEM + `\n\nContexte : l'étudiant révise le schéma « ${d.title} » (image jointe à son premier message). Appuie-toi sur ce schéma pour répondre.`,
+      image: () => Images.get(d.id).then(b => (b ? blobToBase64(b) : null)).catch(() => null),
+      suggestions: ['Explique-moi ce schéma', 'Comment le retenir facilement ?', 'Pose-moi une question dessus'],
+    });
+  },
+  'ai-connect': async () => {
+    const key = document.getElementById('ai-key').value.trim();
+    const limit = Math.max(0.5, Number(document.getElementById('ai-limit').value) || 5);
+    if (!/^sk-ant-/.test(key)) { toast('La clé doit commencer par sk-ant-.'); return; }
+    toast('Vérification de la clé…');
+    try {
+      await callClaude('Réponds uniquement « OK ».', [{ role: 'user', content: 'Test' }], key);
+    } catch (e) { toast(e.message); return; }
+    ai = { key, limit, month: thisMonth(), spent: 0 };
+    saveAi();
+    toast('Claude est activé');
+    rerenderKeepScroll();
+  },
+  'ai-disconnect': () => {
+    if (!confirm('Retirer la clé API de cet appareil ? Le bouton « Demander à Claude » disparaîtra.')) return;
+    localStorage.removeItem(AI_KEY);
+    ai = null;
+    chats.clear();
+    rerenderKeepScroll();
+  },
+
   /* ----- Synchronisation ----- */
   'connect-code': () => {
     const cfg = readConnectionCode(document.getElementById('sync-code').value);
@@ -1446,6 +1751,15 @@ async function connect(cfg) {
   else toast(syncState.msg || 'Connecté, mais la synchro a échoué.');
 }
 
+// Limite de dépense Claude
+$app.addEventListener('change', e => {
+  if (e.target.id !== 'ai-limit' || !ai) return;
+  ai.limit = Math.max(0.5, Number(e.target.value) || 5);
+  saveAi();
+  document.getElementById('ai-settings').innerHTML = aiSettingsHtml();
+  toast('Limite : ' + money(ai.limit) + ' par mois');
+});
+
 // Nom du schéma (mode modification)
 $app.addEventListener('change', e => {
   if (e.target.id !== 'dg-title') return;
@@ -1493,6 +1807,7 @@ $backupInput.addEventListener('change', async () => {
 });
 
 /* ---------- Démarrage ---------- */
+$ask.querySelector('.sheet-head .icon-btn').innerHTML = ICONS.close;
 render();
 
 // Synchro à l'ouverture, au retour dans l'app et au retour du réseau
