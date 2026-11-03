@@ -369,7 +369,7 @@ p { margin: 0; }
   border-bottom: 3px solid transparent; margin-bottom: -2px;
 }
 .tabs button.on { color: var(--ink); border-bottom-color: var(--ink); }
-.dg-title { font-size: 28px; overflow-wrap: anywhere; }
+.dg-title { font-size: 28px; overflow-wrap: anywhere; margin-bottom: 10px; }
 
 .zoom { display: flex; align-items: center; gap: 4px; }
 .zoom .icon-btn { font-size: 22px; padding: 0; }
